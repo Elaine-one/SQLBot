@@ -1,0 +1,69 @@
+# 业务上下文: erp_cross_border 跨境电商 ERP
+# Agent 可以通过 load_business_context 工具按需加载
+
+name: "erp_cross_border 跨境电商数据仓库"
+description: "外贸 ERP 系统，包含订单、商品、利润、物流等数据"
+
+# ── 数据域分类 ──
+
+domains:
+  利润和成本:
+    primary_table: "erp_profit_snapshots"
+    description: >
+      **利润分析的权威数据源**。每行=一个订单的利润快照。
+      包含 revenue_cny(人民币收入) 和各项成本明细：
+      purchase_cost(采购成本), head_haul_cost(头程运费),
+      customs_cost(关税), last_mile_cost(尾程配送),
+      platform_fee(平台佣金), payment_fee(支付手续费),
+      advertising_cost(广告费), return_cost(退货成本), other_cost(其他)。
+      ⚠️ 计算商品利润时必须 JOIN erp_order_items.order_id
+      然后通过 sku_id → erp_product_skus.product_id → erp_products。
+
+  订单和交易:
+    primary_table: "erp_orders"
+    related_tables: ["erp_order_items", "erp_order_costs", "erp_order_status_logs"]
+    description: >
+      erp_orders: 订单主表，receiver_country_id 关联 erp_countries。
+      erp_order_items: 订单商品明细，含 quantity, unit_price, subtotal。
+      ⚠️ unit_price 和 subtotal 是折扣后参考价，不可直接用于利润计算。
+      利润计算必须用 erp_profit_snapshots。
+
+  商品和SKU:
+    primary_table: "erp_products"
+    related_tables: ["erp_product_skus", "erp_product_reviews"]
+    description: >
+      erp_products: SPU 维度商品信息 (name_cn, spu_code, brand, category)。
+      erp_product_skus: SKU 维度，product_id 关联 erp_products。
+      ⚠️ cost_price 和 retail_price 是标准参考价，
+      不是实际采购成本或实际售价。实际利润在 erp_profit_snapshots 中。
+
+  视图（聚合数据，可能有性能问题）:
+    tables: ["erp_v_store_daily", "erp_v_product_sales", "erp_v_returns_analysis",
+             "erp_v_logistics_kpi", "erp_v_purchase_analysis"]
+    description: >
+      这些是预聚合视图，查询可能较慢（使用 TABLESAMPLE 采样）。
+      erp_v_product_sales: SPU 维度销售汇总，只有收入没有成本，不能用于利润分析。
+      erp_v_store_daily: 按店铺/日汇总，marketplace=国家代码。
+
+# ── 字段语义（agent 容易误解的字段） ──
+
+field_semantics:
+  erp_order_items:
+    unit_price: "折扣后单价（非最终售价），不可用于利润计算"
+    subtotal: "行项目折扣后小计，非最终收入。利润计算请用 erp_profit_snapshots"
+    currency_code: "订单币种，大部分为 USD"
+
+  erp_product_skus:
+    cost_price: "SKU 标准成本（参考值），非实际采购成本"
+    retail_price: "标牌零售价（建议售价），非实际成交价"
+
+  erp_profit_snapshots:
+    revenue_cny: "订单最终人民币收入（实收金额）"
+    purchase_cost: "实际采购成本"
+    calculated_at: "利润计算时间"
+
+# ── 关键计算公式 ──
+
+formulas:
+  order_profit: "revenue_cny - (purchase_cost + head_haul_cost + customs_cost + last_mile_cost + platform_fee + payment_fee + advertising_cost + return_cost + other_cost)"
+  product_profit: "JOIN erp_profit_snapshots.order_id = erp_order_items.order_id, 按 sku_id/product_id 聚合上述公式"
