@@ -232,7 +232,7 @@
                     :record-id="message.record?.id"
                     :loading="isTyping"
                     :message="message"
-                    :reasoning-name="['sql_answer', 'chart_answer']"
+                    :reasoning-name="['chart_answer']"
                     @scroll-bottom="scrollToBottom"
                     @finish="onChartAnswerFinish"
                     @error="onChartAnswerError"
@@ -692,10 +692,36 @@ function getChatList(callback?: () => void) {
 function onClickHistory(chat: ChatInfo) {
   scrollToBottom()
   forEach(chat?.records, (record: ChatRecord) => {
-    // getChatData(record.id)
-    if (record.predict_record_id) {
-      // getChatPredictData(record.id)
+    // Data loading is handled by ChartAnswer.onMounted when record.finish is true
+    // Fallback: load data immediately for records that aren't finished
+    if (!record.finish && record.id) {
+      loadRecordData(record.id)
     }
+    if (record.predict_record_id) {
+      loadPredictData(record.id)
+    }
+  })
+}
+
+function loadRecordData(recordId?: number) {
+  if (!recordId) return
+  chatApi.get_chart_data(recordId).then((response) => {
+    currentChat.value.records.forEach((record) => {
+      if (record.id === recordId) {
+        record.data = response
+      }
+    })
+  })
+}
+
+function loadPredictData(recordId?: number) {
+  if (!recordId) return
+  chatApi.get_chart_predict_data(recordId).then((response) => {
+    currentChat.value.records.forEach((record) => {
+      if (record.id === recordId) {
+        record.predict_data = response
+      }
+    })
   })
 }
 

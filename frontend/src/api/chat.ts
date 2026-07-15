@@ -58,6 +58,12 @@ export class ChatRecord {
   regenerate_record_id?: number
   duration?: number
   total_tokens?: number
+  tool_calls_log?: Array<{
+    tool: string
+    args: any
+    result?: string
+    time: Date
+  }>
 
   constructor()
   constructor(

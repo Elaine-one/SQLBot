@@ -66,34 +66,50 @@ function clickShow() {
 
 onMounted(() => {
   if (props.message.isTyping) {
-    // 根据配置项是否默认展开
     show.value = chatConfig.getExpandThinkingBlock
   }
+})
+
+const toolCallsLog = computed(() => {
+  return props.message?.record?.tool_calls_log || []
 })
 </script>
 
 <template>
   <div class="base-answer-block">
-    <el-button v-if="message.isTyping || hasReasoning" class="thinking-btn" @click="clickShow">
+    <el-button
+      v-if="message.isTyping || hasReasoning || toolCallsLog.length > 0"
+      class="thinking-btn"
+      @click="clickShow"
+    >
       <div class="thinking-btn-inner">
         <span v-if="message.isTyping">{{ t('qa.thinking') }}</span>
         <span v-else>{{ t('qa.thinking_step') }}</span>
         <span class="btn-icon">
-          <el-icon v-if="show">
-            <icon_up_outlined />
-          </el-icon>
-          <el-icon v-else>
-            <icon_down_outlined />
-          </el-icon>
+          <el-icon v-if="show"><icon_up_outlined /></el-icon>
+          <el-icon v-else><icon_down_outlined /></el-icon>
         </span>
       </div>
     </el-button>
-    <div v-if="hasReasoning && show" class="reasoning-content">
-      <div v-for="(reason, _index) in reasoningContent" :key="_index" class="reasoning">
+    <div v-if="show && (hasReasoning || toolCallsLog.length > 0)" class="reasoning-content">
+      <div v-if="toolCallsLog.length > 0" class="tool-progress">
+        <div v-for="(tc, _idx) in toolCallsLog" :key="'tc-' + _idx" class="tool-line">
+          <span class="tool-name">{{ tc.tool }}</span>
+          <span v-if="tc.result" class="tool-result">→ {{ tc.result }}</span>
+          <span v-else class="tool-pending">...</span>
+        </div>
+      </div>
+      <div v-for="(reason, _index) in reasoningContent" :key="'rc-' + _index" class="reasoning">
         <MdComponent :message="reason" />
       </div>
     </div>
     <div class="answer-container">
+      <div
+        v-if="message?.record?.sql_answer && message.record.sql_answer.trim()"
+        class="answer-text"
+      >
+        <MdComponent :message="message.record.sql_answer" />
+      </div>
       <slot></slot>
       <el-button v-if="message.isTyping" style="min-width: unset" type="primary" link loading />
       <slot name="tool"></slot>
@@ -141,6 +157,28 @@ onMounted(() => {
     padding-left: 9px;
     border-left: 1px solid rgba(31, 35, 41, 0.15);
     gap: 8px;
+
+    .tool-progress {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+
+      .tool-line {
+        font-size: 13px;
+        line-height: 20px;
+        color: rgba(100, 106, 115, 1);
+        .tool-name {
+          font-weight: 500;
+          color: rgba(31, 35, 41, 0.8);
+        }
+        .tool-result {
+          color: rgba(28, 186, 144, 1);
+        }
+        .tool-pending {
+          color: rgba(143, 149, 158, 1);
+        }
+      }
+    }
 
     .reasoning {
       width: 100%;
