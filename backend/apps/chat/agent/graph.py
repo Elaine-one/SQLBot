@@ -1,0 +1,273 @@
+"""
+LangGraph agent graph for SQLBot.
+
+Builds a ReAct-style agent graph:
+
+    agent_node ←──→ tools_node (custom, passes AgentMemory)
+         │
+         └──→ END (terminal triggered or max iterations)
+
+Cross-turn state is checkpointed via a shared LangGraph MemorySaver.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+import json
+
+from langgraph.graph import StateGraph, END
+from langchain_core.messages import SystemMessage, ToolMessage, AIMessage
+
+from apps.chat.agent.state import AgentState
+from apps.chat.agent.memory import AgentMemory
+from apps.chat.agent.tools.registry import ToolRegistry
+
+
+def _build_system_prompt(memory: AgentMemory, is_followup: bool = False) -> str:
+    """Build the system prompt from template variables.
+
+    Injects cross-turn context from AgentMemory:
+      - conversation_history (prior Q&A pairs from DB)
+      - conversation_summary (accumulated turn summaries)
+      - existing queries (for edit_sql_query reference)
+      - existing charts (for edit_chart reference)
+      - explored_tables (to avoid redundant get_table_metadata calls)
+    """
+    ds_type = memory.datasource_type or "unknown"
+    context = memory.get_context_for_llm()
+
+    base = f"""你是 SQLBot，一个数据分析助手。通过调用工具完成数据查询和可视化。
+
+操作按以下优先级：
+
+## 1. 语义层优先（如有配置）
+
+先用 `load_skill` 加载当前数据源的语义文件:
+- `load_skill("business-{{数据源名}}_metrics")` → 指标 SQL 片段
+- `load_skill("business-{{数据源名}}_segments")` → 可复用筛选条件
+- `load_skill("business-{{数据源名}}_derived_metrics")` → 派生指标公式
+
+语义层覆盖的指标 → 直接用其 SQL 片段，只在此基础上添加 GROUP BY / WHERE / ORDER BY。
+语义层未覆盖的维度或筛选 → 用下面的探索流程补充。
+
+## 2. 没有语义层或语义层未覆盖时 → 探索
+
+1. `search_relevant_tables` 找到入口（不要猜表名）
+2. `get_table_metadata` 深入确认
+3. `get_table_sample_data` 或 `get_field_values` 验证字段含义和数值范围
+4. 不要用稍有不同的措辞反复调用 search_relevant_tables —— 结果已缓存
+
+## 3. 构建查询
+
+- 涉及金额/利润/成本时，字段名 ≠ 字段含义（如 subtotal 可能是折扣后参考价）
+- 优先查找名称含 profit/snapshot/summary 的表作为权威数据源
+- 通过 sample_data 交叉验证数值范围是否合理
+
+## 工具表
+
+| 场景 | 工具 |
+|------|------|
+| 加载语义层(优先) | `load_skill` (skill_id="business-{{数据源名}}_metrics" 等) |
+| 加载数据库方言 | `load_skill` (skill_id="sql-postgresql" 等) |
+| 探索有哪些表 | `search_relevant_tables` |
+| 看表结构 | `get_table_metadata`（DataEase 数据集会返回底层 SQL）|
+| 看字段值 | `get_field_values` |
+| 看样本数据 | `get_table_sample_data` |
+| 创建查询 | `create_sql_query`（DataEase 数据集自动展开为子查询）|
+| 修改查询 | `edit_sql_query` / `replace_sql_fragment` |
+| 改图表 | `edit_chart` |
+| 分析数据 | `analyze_query_result` |
+| 需要用户澄清(终端) | `ask_for_clarification` |
+
+## 查询规范
+
+- 明细数据必须加 LIMIT，默认 1000；聚合查询不需要
+- 用户说"全部""所有"时不加 LIMIT
+- create_sql_query / edit_sql_query / edit_chart / ask_for_clarification 是终端工具：成功→本轮完成。失败→修正后重试
+
+数据源类型: {ds_type}
+"""
+
+    # ═══ DataEase dataset guidance (assistant mode only) ═══
+    if memory.out_ds_instance is not None:
+        base += """
+## DataEase 数据集
+
+部分表标注了 is_dataset=true，它们是预定义的逻辑视图，底层有完整的 SQL 查询。
+你不需关心底层 SQL 细节——像操作普通表一样写 SQL 即可，
+create_sql_query 会自动处理数据集到物理查询的转换。
+
+规则：
+- 用 get_table_metadata 返回的字段 name 作为列名写入 SQL
+- 如果字段有 comment（业务名称），用 AS 别名映射为可读输出
+- 用 get_field_values / get_table_sample_data 确认字段值
+- 不要尝试修改或"优化"数据集的内部 SQL
+"""
+
+    # ═══ Inject conversation history (from DB ChatRecords) ═══
+    if memory.conversation_history:
+        base += f"\n{memory.conversation_history}\n"
+
+    # ═══ Inject conversation summary (accumulated turn summaries) ═══
+    if memory.conversation_summary:
+        base += f"\n<conversation-summary>{memory.conversation_summary}</conversation-summary>\n"
+
+    # ═══ Inject existing artifacts (queries + charts) ═══
+    if memory.queries:
+        base += "\n## 已有查询\n"
+        for qid, q in memory.queries.items():
+            tables = ", ".join(q.tables_used) if q.tables_used else "?"
+            sql_preview = q.sql[:150] + "..." if len(q.sql) > 150 else q.sql
+            base += f"- `{qid}` (状态:{q.status}, 表:{tables}): {sql_preview}\n"
+
+    if memory.charts:
+        base += "\n## 已有图表\n"
+        for cid, c in memory.charts.items():
+            ctype = c.chart_config.get("type", "unknown") if c.chart_config else "unknown"
+            base += f"- `{cid}` (类型:{ctype}, 绑定查询:{c.record_id})\n"
+
+    # ═══ Inject explored table cache hint ═══
+    if memory.explored_tables:
+        table_names = list(memory.explored_tables.keys())
+        base += f"\n已缓存的表结构: {', '.join(table_names)}（字段结构已获取，无需重复调用 get_table_metadata）\n"
+
+    # ═══ Follow-up mode: edit-first guidance ═══
+    if is_followup and (memory.queries or memory.charts or context.strip()):
+        base += """
+## 追问模式
+
+你正在处理一条追问消息。上方列出了之前对话中产生的可引用对象。
+
+决策规则:
+1. 用户要求修改图表类型/样式（"用柱状图""换个饼图""加标题"）
+   → `edit_chart` ← 不改SQL，不复执行
+2. 用户要求修改数据范围/条件（"只看华东区""加上利润列"）
+   → `edit_sql_query` ← 字符串替换，系统会自动重新执行
+3. 用户要求换个统计维度（"改成按月份""按客户分组"）
+   → 检查已有查询是否覆盖该维度
+   → 覆盖 → `edit_sql_query`
+   → 不覆盖 → `create_sql_query`
+4. 用户提出全新话题 → `create_sql_query`
+5. 你创建的每个图表都会保存为新记录，历史图表不会丢失
+   → 不需要担心覆盖问题，只需专注于生成当前轮的最佳结果
+"""
+
+    return base
+
+
+def make_agent_node(llm, memory: AgentMemory):
+    """Create the agent node function (LLM call with tools).
+    AgentMemory is captured via closure, not stored in LangGraph state."""
+
+    llm_with_tools = llm.bind_tools(ToolRegistry.get_openai_schemas())
+
+    def agent_node(state: AgentState) -> dict:
+        messages = list(state["messages"])
+
+        # Inject system prompt on first call (per turn)
+        if not any(isinstance(m, SystemMessage) for m in messages):
+            is_followup = getattr(memory, "is_followup", False)
+            messages = [SystemMessage(content=_build_system_prompt(memory, is_followup))] + messages
+
+        try:
+            response = llm_with_tools.invoke(messages)
+        except Exception as exc:
+            # Log the error details to help diagnose 400 errors
+            from common.utils.utils import SQLBotLogUtil as _log
+            _log.info(f"[Agent] LLM call failed: {exc}")
+            if hasattr(exc, "response"):
+                try:
+                    _log.info(f"[Agent] LLM response status: {exc.response.status_code}")
+                    _log.info(f"[Agent] LLM response body: {exc.response.text[:2000]}")
+                except Exception:
+                    pass
+            # Log system prompt length for debugging
+            sys_msg = next((m.content for m in messages if isinstance(m, SystemMessage)), "")
+            _log.info(f"[Agent] System prompt length: {len(sys_msg)} chars, "
+                      f"total messages: {len(messages)}")
+            raise
+
+        return {
+            "messages": [response],
+            "iteration": state.get("iteration", 0) + 1,
+        }
+
+    return agent_node
+
+
+def _make_tools_node(memory: AgentMemory):
+    """Create a custom tools node that accesses AgentMemory via closure."""
+
+    async def tools_node(state: AgentState) -> dict:
+        messages = list(state["messages"])
+        last_msg = messages[-1]
+
+        if not hasattr(last_msg, "tool_calls") or not last_msg.tool_calls:
+            return {"messages": []}
+
+        tool_messages: list[ToolMessage] = []
+        for tc in last_msg.tool_calls:
+            args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+
+            result = await ToolRegistry.execute(
+                name=tc["name"] if isinstance(tc, dict) else tc.name,
+                args=args,
+                memory=memory,
+            )
+            tool_msg = ToolMessage(
+                content=json.dumps(result, ensure_ascii=False),
+                name=tc["name"] if isinstance(tc, dict) else tc.name,
+                tool_call_id=tc["id"] if isinstance(tc, dict) else tc.id,
+            )
+            tool_messages.append(tool_msg)
+
+        return {"messages": tool_messages}
+
+    return tools_node
+
+
+def _route_fn(memory: AgentMemory):
+    """Create a conditional routing function with closure-captured memory."""
+    def route(state: AgentState) -> Literal["tools", "end"]:
+        if memory.terminal_triggered:
+            return "end"
+        if state.get("iteration", 0) >= memory.max_iterations:
+            return "end"
+        if memory.sql_retry_count > memory.max_sql_retries:
+            return "end"
+
+        last_msg = state["messages"][-1] if state["messages"] else None
+        if last_msg and hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            return "tools"
+
+        return "end"
+    return route
+
+
+def build_agent_graph(llm, memory: AgentMemory):
+    """
+    Build the SQLBot Agent LangGraph.
+    AgentMemory is captured via closure — NOT stored in LangGraph state
+    (it contains non-serializable objects like DB sessions).
+
+    No checkpointer is used.  Cross-turn context comes from AgentMemory
+    persistence (Chat.memory_state), NOT from LangGraph checkpointing.
+    Using a shared checkpointer would leak intermediate tool-call messages
+    from prior questions into the current LLM context.
+    """
+    workflow = StateGraph(AgentState)
+    workflow.add_node("agent", make_agent_node(llm, memory))
+    workflow.add_node("tools", _make_tools_node(memory))
+    workflow.set_entry_point("agent")
+    workflow.add_conditional_edges("agent", _route_fn(memory), {
+        "tools": "tools",
+        "end": END,
+    })
+    workflow.add_edge("tools", "agent")
+
+    return workflow.compile()

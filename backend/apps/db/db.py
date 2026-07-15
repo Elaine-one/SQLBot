@@ -592,6 +592,12 @@ def exec_sql(ds: CoreDatasource | AssistantOutDsSchema, sql: str, origin_column=
     db = DB.get_db(ds.type)
     if db.connect_type == ConnectType.sqlalchemy:
         with get_session(ds) as session:
+            # Set statement timeout to prevent hung queries from
+            # blocking the agent thread permanently (30s limit).
+            try:
+                session.execute(text("SET LOCAL statement_timeout = '30s'"))
+            except Exception:
+                pass
             with session.execute(text(sql)) as result:
                 try:
                     columns = result.keys()._keys if origin_column else [item.lower() for item in result.keys()._keys]

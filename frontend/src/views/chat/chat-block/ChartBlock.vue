@@ -369,9 +369,8 @@ watch(
 <template>
   <div
     v-if="
-      !message.isTyping &&
-      ((!isPredict && (message?.record?.sql || message?.record?.chart)) ||
-        (isPredict && message?.record?.chart && data.length > 0))
+      (!isPredict && (message?.record?.sql || message?.record?.chart)) ||
+      (isPredict && message?.record?.chart && data.length > 0)
     "
     v-loading.fullscreen.lock="loading"
     class="chart-component-container"

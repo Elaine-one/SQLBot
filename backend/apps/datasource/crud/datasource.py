@@ -535,13 +535,17 @@ def get_table_schema(session: SessionDep, current_user: CurrentUser, ds: CoreDat
         if obj.fields:
             field_list = []
             for field in obj.fields:
+                field_name = field.field_name
                 field_comment = ''
                 if field.custom_comment:
                     field_comment = field.custom_comment.strip()
-                if field_comment == '':
-                    field_list.append(f"({field.field_name}:{field.field_type})")
+                if field_comment and field_comment != field_name:
+                    # 当业务名称与列名不同时，明确标注"业务名称"以区分SQL标识符
+                    field_list.append(f"({field_name}:{field.field_type}, 业务名称:{field_comment})")
+                elif field_comment:
+                    field_list.append(f"({field_name}:{field.field_type}, {field_comment})")
                 else:
-                    field_list.append(f"({field.field_name}:{field.field_type}, {field_comment})")
+                    field_list.append(f"({field_name}:{field.field_type})")
             schema_table += ",\n".join(field_list)
         schema_table += '\n]\n'
 

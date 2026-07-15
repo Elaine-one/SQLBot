@@ -96,6 +96,18 @@ template:
         <rule>
           生成的SQL必须符合<db-engine>内提供数据库引擎的规范
         </rule>
+        <rule priority="critical" id="column-business-name-rule">
+          <title>字段"业务名称"不是SQL标识符</title>
+          <description>
+            当<m-schema>中的字段定义包含"业务名称:"标注时：
+            1. "业务名称:"后面的文本是用户对该字段的习惯称呼（业务别名），<b>绝对不能</b>作为SQL中的列名使用
+            2. SQL中<b>必须使用</b>括号内逗号前的第一个标识符（字段的真实列名）
+            3. 示例：
+               如果<m-schema>中为 (行小计USD:numeric, 业务名称:订单总额usd)，
+               则SQL中必须使用 "行小计USD"，绝对不能使用 "订单总额usd"
+            4. 检查方法：生成SQL后，对比SQL中每个字段名是否出现在<m-schema>中"业务名称:"<b>之前</b>，而非之后
+          </description>
+        </rule>
         <rule priority="critical" id="strict-identifier-preservation">
           <title>严格保持数据库标识符原样</title>
           <description>

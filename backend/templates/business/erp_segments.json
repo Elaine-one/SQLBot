@@ -1,0 +1,24 @@
+{
+  "_说明": "可复用筛选条件。一次定义，所有指标共享。",
+
+  "segments": {
+    "有效订单": {
+      "description": "排除已取消和未支付的订单",
+      "where": "erp_orders.status != 'cancelled' AND erp_orders.paid_at IS NOT NULL",
+      "涉及表": ["erp_orders"],
+      "涉及字段": ["status", "paid_at"]
+    },
+    "中国以外": {
+      "description": "收货国家不是中国（外贸订单）",
+      "where": "erp_countries.name_cn != '中国' AND erp_countries.name != 'China'",
+      "涉及表": ["erp_countries", "erp_orders"],
+      "涉及字段": ["name_cn", "receiver_country_id"]
+    },
+    "已完成发货": {
+      "description": "已发货或已签收的订单",
+      "where": "erp_orders.status IN ('shipped', 'delivered')",
+      "涉及表": ["erp_orders"],
+      "涉及字段": ["status"]
+    }
+  }
+}

@@ -1128,6 +1128,8 @@ class LLMService:
         Returns:
             Query results
         """
+        # SQL syntax validation is now handled by Agent's create_sql_query tool
+        # (sqlglot.parse) before execution. The old ;) cleanup is no longer needed.
         SQLBotLogUtil.info(f"Executing SQL on ds_id {self.ds.id}: {sql}")
         try:
             return exec_sql(ds=self.ds, sql=sql, origin_column=False)

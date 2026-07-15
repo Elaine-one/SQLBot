@@ -1,0 +1,157 @@
+{
+  "_说明": "跨境电商ERP指标。每个指标有SQL片段，Agent选择指标名即可获得正确SQL。派生指标见erp_derived_metrics.json。",
+
+  "metrics": {
+    "订单收入人民币": {
+      "aliases": ["营收", "销售额", "收入", "revenue"],
+      "description": "所有订单的人民币收入总和（来源: erp_profit_snapshots）",
+      "sql": "SUM(erp_profit_snapshots.revenue_cny)",
+      "segments": [],
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["revenue_cny"]
+    },
+
+    "有效订单收入": {
+      "aliases": ["有效营收", "实收金额"],
+      "description": "有效订单的人民币收入",
+      "sql": "SUM(erp_profit_snapshots.revenue_cny)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_profit_snapshots", "erp_orders"],
+      "涉及字段": ["revenue_cny", "status", "paid_at"],
+      "joins": ["erp_orders.id = erp_profit_snapshots.order_id"]
+    },
+
+    "采购成本": {
+      "aliases": ["商品成本", "进货成本", "COGS"],
+      "description": "实际采购成本（来源: erp_profit_snapshots.purchase_cost）",
+      "sql": "SUM(erp_profit_snapshots.purchase_cost)",
+      "segments": [],
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["purchase_cost"]
+    },
+
+    "头程运费": {
+      "aliases": ["头程物流费", "国内到海外仓运费"],
+      "description": "国内仓库到海外仓的运费",
+      "sql": "SUM(erp_profit_snapshots.head_haul_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["head_haul_cost"]
+    },
+
+    "关税": {
+      "aliases": ["海关税费", "duty"],
+      "sql": "SUM(erp_profit_snapshots.customs_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["customs_cost"]
+    },
+
+    "尾程配送费": {
+      "aliases": ["末端物流费", "last mile"],
+      "sql": "SUM(erp_profit_snapshots.last_mile_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["last_mile_cost"]
+    },
+
+    "平台费": {
+      "aliases": ["平台佣金", "platform fee"],
+      "sql": "SUM(erp_profit_snapshots.platform_fee)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["platform_fee"]
+    },
+
+    "支付手续费": {
+      "aliases": ["支付网关费", "payment fee"],
+      "sql": "SUM(erp_profit_snapshots.payment_fee)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["payment_fee"]
+    },
+
+    "广告费": {
+      "aliases": ["推广费", "advertising"],
+      "sql": "SUM(erp_profit_snapshots.advertising_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["advertising_cost"]
+    },
+
+    "退货成本": {
+      "aliases": ["退款成本", "return cost"],
+      "sql": "SUM(erp_profit_snapshots.return_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["return_cost"]
+    },
+
+    "其他成本": {
+      "aliases": ["杂项费用", "other cost"],
+      "sql": "SUM(erp_profit_snapshots.other_cost)",
+      "涉及表": ["erp_profit_snapshots"],
+      "涉及字段": ["other_cost"]
+    },
+
+    "订单数": {
+      "aliases": ["订单量", "单量", "成交笔数"],
+      "sql": "COUNT(DISTINCT erp_orders.id)",
+      "segments": [],
+      "涉及表": ["erp_orders"],
+      "涉及字段": ["id"]
+    },
+
+    "有效订单数": {
+      "aliases": ["有效单量"],
+      "sql": "COUNT(DISTINCT erp_orders.id)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_orders"],
+      "涉及字段": ["id", "status", "paid_at"]
+    },
+
+    "销量": {
+      "aliases": ["销售数量", "售出件数"],
+      "sql": "SUM(erp_order_items.quantity)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_order_items", "erp_orders"],
+      "涉及字段": ["quantity", "status"],
+      "joins": ["erp_orders.id = erp_order_items.order_id"]
+    },
+
+    "商品数": {
+      "aliases": ["在售SKU数", "SKU数量"],
+      "sql": "COUNT(DISTINCT erp_product_skus.id)",
+      "涉及表": ["erp_product_skus"],
+      "涉及字段": ["id"]
+    },
+
+    "SPU数": {
+      "aliases": ["产品数", "品类数"],
+      "sql": "COUNT(DISTINCT erp_products.id)",
+      "涉及表": ["erp_products"],
+      "涉及字段": ["id"]
+    },
+
+    "涉及国家数": {
+      "aliases": ["国家数量", "目的国数"],
+      "sql": "COUNT(DISTINCT erp_orders.receiver_country_id)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_orders"],
+      "涉及字段": ["receiver_country_id", "status"]
+    },
+
+    "SKU成本": {
+      "aliases": ["标准成本"],
+      "sql": "SUM(erp_product_skus.cost_price * erp_order_items.quantity)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_order_items", "erp_product_skus", "erp_orders"],
+      "涉及字段": ["cost_price", "quantity", "status"],
+      "joins": ["erp_order_items.sku_id = erp_product_skus.id", "erp_orders.id = erp_order_items.order_id"],
+      "_警告": "cost_price 是 SKU 标准参考成本，非实际采购成本。实际成本请用采购成本指标。"
+    },
+
+    "订单明细收入": {
+      "aliases": ["明细销售额", "line_item_revenue"],
+      "sql": "SUM(erp_order_items.subtotal)",
+      "segments": ["有效订单"],
+      "涉及表": ["erp_order_items", "erp_orders"],
+      "涉及字段": ["subtotal", "status"],
+      "joins": ["erp_orders.id = erp_order_items.order_id"],
+      "_警告": "subtotal 是折扣后参考金额，非订单最终收入。正式报表请用 有效订单收入。"
+    }
+  }
+}

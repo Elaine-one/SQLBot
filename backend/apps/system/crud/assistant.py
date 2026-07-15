@@ -204,11 +204,15 @@ class AssistantOutDs:
 
             field_list = []
             for field in table.fields:
+                field_name = field.name
                 field_comment = field.comment
-                if field_comment == '':
-                    field_list.append(f"({field.name}:{field.type})")
+                if field_comment and field_comment != field_name:
+                    # 当业务名称与列名不同时，明确标注"业务名称"以区分SQL标识符
+                    field_list.append(f"({field_name}:{field.type}, 业务名称:{field_comment})")
+                elif field_comment:
+                    field_list.append(f"({field_name}:{field.type}, {field_comment})")
                 else:
-                    field_list.append(f"({field.name}:{field.type}, {field_comment})")
+                    field_list.append(f"({field_name}:{field.type})")
             schema_table += ",\n".join(field_list)
             schema_table += '\n]\n'
             t_obj = {"id": i, "schema_table": schema_table}
