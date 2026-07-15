@@ -219,28 +219,41 @@ async def start_chat(session: SessionDep, current_user: CurrentUser, current_ass
 
 @router.post("/recommend_questions/{chat_record_id}", summary=f"{PLACEHOLDER_PREFIX}ask_recommend_questions")
 async def ask_recommend_questions(session: SessionDep, current_user: CurrentUser, chat_record_id: int,
-                                  current_assistant: CurrentAssistant, articles_number: Optional[int] = 4):
+                                  current_assistant: CurrentAssistant, articles_number: Optional[int] = 4,
+                                  engine: str = "agent"):
+    """Generate recommended follow-up questions.
+
+    engine=agent: lightweight prompt (no schema embedding), uses the same LLM config.
+    engine=pipeline: full LLMService with schema context (old behavior).
+    """
     def _return_empty():
         yield 'data:' + orjson.dumps({'content': '[]', 'type': 'recommended_question'}).decode() + '\n\n'
 
     try:
         record = get_chat_record_by_id(session, chat_record_id)
-
         if not record:
             return StreamingResponse(_return_empty(), media_type="text/event-stream")
 
         request_question = ChatQuestion(chat_id=record.chat_id, question=record.question if record.question else '')
 
+        if engine == "agent":
+            # Lightweight: no schema embedding, just question + history
+            from apps.chat.agent.adapter import stream_agent_recommend
+            llm_service = await LLMService.create(session, current_user, request_question, current_assistant, True)
+            return StreamingResponse(
+                stream_agent_recommend(llm_service, session, articles_number),
+                media_type="text/event-stream",
+            )
+
+        # Old Pipeline fallback
         llm_service = await LLMService.create(session, current_user, request_question, current_assistant, True)
         llm_service.set_record(record)
         llm_service.set_articles_number(articles_number)
         llm_service.run_recommend_questions_task_async()
     except Exception as e:
         traceback.print_exc()
-
         def _err(_e: Exception):
             yield 'data:' + orjson.dumps({'content': str(_e), 'type': 'error'}).decode() + '\n\n'
-
         return StreamingResponse(_err(e), media_type="text/event-stream")
 
     return StreamingResponse(llm_service.await_result(), media_type="text/event-stream")
@@ -370,7 +383,14 @@ async def question_answer_inner(session: SessionDep, current_user: CurrentUser, 
 async def stream_sql(session: SessionDep, current_user: CurrentUser, request_question: ChatQuestion,
                      current_assistant: Optional[CurrentAssistant] = None, in_chat: bool = True, stream: bool = True,
                      finish_step: ChatFinishStep = ChatFinishStep.GENERATE_CHART, embedding: bool = False,
-                     return_img: bool = True):
+                     # engine: str = "pipeline"  # 旧默认，Phase 4 起改为 agent
+                     return_img: bool = True, engine: str = "agent"):
+    """Main entry: route to pipeline or agent engine based on `engine` param."""
+    if engine == "agent":
+        return await _stream_sql_agent(session, current_user, request_question,
+                                        current_assistant, in_chat, stream,
+                                        finish_step, embedding, return_img)
+
     try:
         llm_service = await LLMService.create(session, current_user, request_question, current_assistant,
                                               embedding=embedding)
@@ -405,6 +425,50 @@ async def stream_sql(session: SessionDep, current_user: CurrentUser, request_que
             content=raw_data,
             status_code=status_code,
         )
+
+
+async def _stream_sql_agent(session: SessionDep, current_user: CurrentUser,
+                             request_question: ChatQuestion,
+                             current_assistant: Optional[CurrentAssistant] = None,
+                             in_chat: bool = True, stream: bool = True,
+                             finish_step: ChatFinishStep = ChatFinishStep.GENERATE_CHART,
+                             embedding: bool = False, return_img: bool = True):
+    """Execute the SQLBot Agent engine and stream SSE events."""
+    from apps.chat.agent.adapter import stream_agent
+
+    try:
+        # Reuse LLMService.create() for datasource resolution and config
+        llm_service = await LLMService.create(session, current_user, request_question,
+                                              current_assistant, embedding=embedding)
+        llm_service.init_record(session=session)
+    except Exception as e:
+        traceback.print_exc()
+        if stream:
+            def _err(_e: Exception):
+                yield 'data:' + orjson.dumps({'content': str(_e), 'type': 'error'}).decode() + '\n\n'
+            return StreamingResponse(_err(e), media_type="text/event-stream")
+        else:
+            return JSONResponse(content={'message': str(e)}, status_code=500)
+
+    question = request_question.question or ""
+
+    # Detect follow-up: a chat with prior non-first records is a follow-up
+    is_followup = False
+    chat_id = request_question.chat_id
+    if chat_id:
+        from apps.chat.models.chat_model import ChatRecord
+        from sqlalchemy import and_, select, func
+        count = session.exec(
+            select(func.count(ChatRecord.id)).where(
+                and_(ChatRecord.chat_id == chat_id, ChatRecord.first_chat == False)
+            )
+        ).scalar()
+        is_followup = (count or 0) > 0
+
+    return StreamingResponse(
+        stream_agent(llm_service, session, question, is_followup=is_followup),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/record/{chat_record_id}/{action_type}", summary=f"{PLACEHOLDER_PREFIX}analysis_or_predict")

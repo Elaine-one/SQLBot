@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Union
 from fastapi import Body
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, Text, BigInteger, DateTime, Identity, Boolean
+from sqlalchemy import Column, Integer, Text, BigInteger, DateTime, Identity, Boolean, JSON
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import SQLModel, Field
@@ -98,6 +98,7 @@ class Chat(SQLModel, table=True):
     recommended_question_answer: str = Field(sa_column=Column(Text, nullable=True))
     recommended_question: str = Field(sa_column=Column(Text, nullable=True))
     recommended_generate: bool = Field(default=False)
+    memory_state: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
 
 
 class ChatRecord(SQLModel, table=True):
