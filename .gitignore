@@ -189,3 +189,23 @@ test.py
 
 
 !/.venv/
+
+# Deployment runtime data
+data/
+
+# Custom local test files
+tests/test_cwe89_escape_fix.py
+
+# Docker env
+.env
+
+# Docker Compose (contains credentials)
+docker-compose.yaml
+docker-compose.original.yaml
+docker-compose.override.yaml
+
+# Local startup scripts
+start-external-pg.sh
+
+# Local analysis docs
+docs/
