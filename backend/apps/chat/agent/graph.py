@@ -23,16 +23,24 @@ from apps.chat.agent.memory import AgentMemory
 from apps.chat.agent.tools.registry import ToolRegistry
 
 
-def _build_system_prompt(memory: AgentMemory, is_followup: bool = False) -> str:
-    """Build the system prompt from template variables.
+def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
+                         profile=None) -> str:
+    """Build the system prompt for the agent.
 
-    Injects cross-turn context from AgentMemory:
+    If `profile` provides a non-empty system_prompt, return it as-is
+    (analysis/predict profiles embed data directly in the prompt).
+
+    Otherwise builds the QA prompt from template variables:
       - conversation_history (prior Q&A pairs from DB)
       - conversation_summary (accumulated turn summaries)
       - existing queries (for edit_sql_query reference)
       - existing charts (for edit_chart reference)
       - explored_tables (to avoid redundant get_table_metadata calls)
     """
+    # Profile override: analysis/predict use pre-built prompts
+    if profile is not None and profile.system_prompt:
+        return profile.system_prompt
+
     ds_type = memory.datasource_type or "unknown"
     context = memory.get_context_for_llm()
 
@@ -155,11 +163,22 @@ create_sql_query 会自动处理数据集到物理查询的转换。
     return base
 
 
-def make_agent_node(llm, memory: AgentMemory):
+def make_agent_node(llm, memory: AgentMemory, schemas: list[dict] | None = None,
+                    profile=None):
     """Create the agent node function (LLM call with tools).
-    AgentMemory is captured via closure, not stored in LangGraph state."""
 
-    llm_with_tools = llm.bind_tools(ToolRegistry.get_openai_schemas())
+    If `schemas` is provided, only those tools are available to the LLM.
+    If None, all registered tools are used (QA default).
+
+    If `profile` is provided, its system_prompt can override the
+    template-built prompt (used by analysis/predict).
+
+    AgentMemory is captured via closure, not stored in LangGraph state.
+    """
+    if schemas is None:
+        schemas = ToolRegistry.get_openai_schemas()
+
+    llm_with_tools = llm.bind_tools(schemas) if schemas else llm
 
     def agent_node(state: AgentState) -> dict:
         messages = list(state["messages"])
@@ -167,12 +186,12 @@ def make_agent_node(llm, memory: AgentMemory):
         # Inject system prompt on first call (per turn)
         if not any(isinstance(m, SystemMessage) for m in messages):
             is_followup = getattr(memory, "is_followup", False)
-            messages = [SystemMessage(content=_build_system_prompt(memory, is_followup))] + messages
+            messages = [SystemMessage(content=_build_system_prompt(
+                memory, is_followup, profile))] + messages
 
         try:
             response = llm_with_tools.invoke(messages)
         except Exception as exc:
-            # Log the error details to help diagnose 400 errors
             from common.utils.utils import SQLBotLogUtil as _log
             _log.info(f"[Agent] LLM call failed: {exc}")
             if hasattr(exc, "response"):
@@ -181,7 +200,6 @@ def make_agent_node(llm, memory: AgentMemory):
                     _log.info(f"[Agent] LLM response body: {exc.response.text[:2000]}")
                 except Exception:
                     pass
-            # Log system prompt length for debugging
             sys_msg = next((m.content for m in messages if isinstance(m, SystemMessage)), "")
             _log.info(f"[Agent] System prompt length: {len(sys_msg)} chars, "
                       f"total messages: {len(messages)}")
@@ -249,9 +267,15 @@ def _route_fn(memory: AgentMemory):
     return route
 
 
-def build_agent_graph(llm, memory: AgentMemory):
+def build_agent_graph(llm, memory: AgentMemory, profile=None):
     """
     Build the SQLBot Agent LangGraph.
+
+    If `profile` is provided with explicit `tool_names`, only those tools
+    are bound to the LLM. Each profile carries its own tool list (QA=13,
+    analysis=5, predict=6). The registry is shared — tools are registered
+    once, and each profile picks what it needs by name.
+
     AgentMemory is captured via closure — NOT stored in LangGraph state
     (it contains non-serializable objects like DB sessions).
 
@@ -260,8 +284,15 @@ def build_agent_graph(llm, memory: AgentMemory):
     Using a shared checkpointer would leak intermediate tool-call messages
     from prior questions into the current LLM context.
     """
+    # Determine tool schemas — each profile carries an explicit tool_names list
+    if profile is not None and profile.tool_names:
+        schemas = ToolRegistry.get_openai_schemas_for(profile.tool_names)
+    else:
+        # Fallback (no profile or empty list): all registered tools
+        schemas = ToolRegistry.get_openai_schemas()
+
     workflow = StateGraph(AgentState)
-    workflow.add_node("agent", make_agent_node(llm, memory))
+    workflow.add_node("agent", make_agent_node(llm, memory, schemas, profile))
     workflow.add_node("tools", _make_tools_node(memory))
     workflow.set_entry_point("agent")
     workflow.add_conditional_edges("agent", _route_fn(memory), {

@@ -60,6 +60,15 @@ class ToolRegistry:
         """Return all tools as OpenAI function-calling schemas."""
         return [t.to_openai_schema() for t in cls._tools.values()]
 
+    @classmethod
+    def get_openai_schemas_for(cls, names: list[str]) -> list[dict]:
+        """Return schemas only for the named tools (order-preserving)."""
+        return [
+            t.to_openai_schema()
+            for name in names
+            if (t := cls._tools.get(name))
+        ]
+
     # ── execution ─────────────────────────────────────────
 
     @classmethod

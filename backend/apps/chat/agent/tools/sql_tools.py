@@ -57,7 +57,10 @@ def _validate_sql_syntax(sql: str, ds_type: str) -> tuple[bool, str]:
     if not keyword:
         return False, "无法解析 SQL 语句"
     if keyword in _DENIED_KEYWORDS:
-        return False, f"禁止的 SQL 操作: {keyword}。仅支持 SELECT / WITH 查询。"
+        return False, (
+            f"禁止的 SQL 操作「{keyword}」。SQLBot 是数据查询助手，仅支持 SELECT / WITH 只读查询，"
+            f"不支持 INSERT / DELETE / DROP 等写操作。请重新输入查询需求。"
+        )
 
     dialect = _resolve_dialect(ds_type)
     import sqlglot
@@ -69,6 +72,93 @@ def _validate_sql_syntax(sql: str, ds_type: str) -> tuple[bool, str]:
         return False, f"SQL 语法错误: {exc}"
 
     return True, ""
+
+
+def _check_join_conditions(sql: str) -> list[str]:
+    """检查 JOIN ON 条件是否存在常见问题。返回警告信息列表。
+
+    不依赖业务知识，仅做通用结构检查:
+      1. ON 条件两端字段名是否含 'id'/'key' 等唯一标识暗示
+      2. ON 是否使用了 LIKE / ILIKE / 文本函数
+      3. 同一个 JOIN 是否只有非唯一字段关联
+
+    这是一个软检查: 不阻止SQL生成，只返回警告供 LLM 自我修正。
+    """
+    import sqlglot.expressions as exp
+
+    warnings: list[str] = []
+    try:
+        tree = sqlglot.parse_one(sql)
+        if not tree:
+            return warnings
+
+        for join in tree.find_all(exp.Join):
+            on_clause = join.args.get("on")
+            if not on_clause:
+                continue
+            on_sql = on_clause.sql().upper()
+
+            # 表别名/名称
+            table_node = join.args.get("this")
+            table_label = table_node.alias_or_name if table_node else "?"
+
+            # 检查: LIKE/ILIKE 作 JOIN 条件
+            if "LIKE" in on_sql:
+                warnings.append(
+                    f"JOIN {table_label} 使用了模糊匹配({on_clause.sql()[:60]})，"
+                    f"可能导致行数爆炸或性能问题"
+                )
+                continue
+
+            # 提取 ON 中的等值比较字段（A.col = B.col）
+            eq_pairs = _extract_eq_columns(on_clause)
+
+            if not eq_pairs:
+                continue
+
+            # 检查: 所有等值对是否都没有 ID 类字段
+            has_id_field = any(
+                _looks_like_unique_key(left) or _looks_like_unique_key(right)
+                for left, right in eq_pairs
+            )
+            if not has_id_field:
+                pairs_str = ", ".join(f"{l}={r}" for l, r in eq_pairs[:2])
+                warnings.append(
+                    f"JOIN {table_label} ON {pairs_str}: "
+                    f"关联字段疑似非唯一标识（缺少 id/key/code 等），可能产生多对多行数爆炸"
+                )
+
+    except Exception:
+        pass
+
+    return warnings
+
+
+def _extract_eq_columns(on_clause) -> list[tuple[str, str]]:
+    """从 ON 子句中提取等值比较的字段对。"""
+    import sqlglot.expressions as exp
+
+    pairs: list[tuple[str, str]] = []
+
+    def _collect(node):
+        if isinstance(node, exp.EQ):
+            left = node.left.sql().strip('"').strip('`').strip("'").lower()
+            right = node.right.sql().strip('"').strip('`').strip("'").lower()
+            pairs.append((left, right))
+        elif isinstance(node, (exp.And, exp.Or)):
+            _collect(node.left)
+            _collect(node.right)
+
+    _collect(on_clause)
+    return pairs
+
+
+def _looks_like_unique_key(col: str) -> bool:
+    """判断字段名是否像唯一标识（含 id/key/code/no/sn/uuid/pk）。"""
+    col_lower = col.lower().split(".")[-1]  # 去表前缀
+    key_patterns = ("id", "_id", "key", "_key", "code", "_code", "no", "_no",
+                    "sn", "_sn", "uuid", "pk_", "_pk")
+    return col_lower.endswith(key_patterns) or "id_" in col_lower
 
 
 def _extract_table_names(sql: str) -> list[str]:
@@ -159,25 +249,32 @@ async def create_sql_query(
     compiler = DatasetSQLCompiler(memory)
     compiled = compiler.compile(sql)
 
-    # 2. Syntax check (against compiled SQL so dataset subqueries parse)
+    # 2. Syntax check
     valid, error = _validate_sql_syntax(compiled, ds_type)
     if not valid:
         memory.sql_retry_count += 1
-        return {
-            "success": False,
-            "error": error,
-            "retries_left": memory.max_sql_retries - memory.sql_retry_count,
-        }
+        return {"success": False, "error": error}
 
     # 3. Read-only check
     from apps.db.db import check_sql_read
     try:
-        if not check_sql_read(compiled, memory.ds):
-            return {"success": False, "error": "仅支持 SELECT / WITH 查询"}
+        is_safe, reason = check_sql_read(compiled, memory.ds)
+        if not is_safe:
+            return {"success": False, "error": reason}
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
 
-    # 4. Table-existence check (against original SQL — dataset names are
+    # 4. JOIN condition review — 通用检查：ON 条件两端是否都没有 ID 类字段
+    join_warnings = _check_join_conditions(compiled)
+    if join_warnings:
+        memory.sql_retry_count += 1
+        return {
+            "success": False,
+            "error": "JOIN 条件可能存在问题: " + "；".join(join_warnings),
+            "hint": "请检查关联字段是否为唯一标识字段。如果是汇总表，需同时匹配ID+日期。",
+        }
+
+    # 5. Table-existence check (against original SQL — dataset names are
     #    expected; physical table names must be in explored_tables)
     used_original = _extract_table_names(original_sql)
     unknown = [
@@ -191,7 +288,7 @@ async def create_sql_query(
             "action_required": "请对每张表调用 get_table_metadata(table_name=...) 获取字段结构",
         }
 
-    # 5. EXPLAIN validation against compiled SQL
+    # 6. EXPLAIN validation against compiled SQL
     try:
         from apps.db.db import exec_sql as _exec_raw
         explain_sql = f"EXPLAIN {compiled}"
@@ -290,8 +387,9 @@ async def edit_sql_query(
 
     from apps.db.db import check_sql_read
     try:
-        if not check_sql_read(compiled, memory.ds):
-            return {"success": False, "error": "编辑后的 SQL 包含非只读操作"}
+        is_safe, reason = check_sql_read(compiled, memory.ds)
+        if not is_safe:
+            return {"success": False, "error": reason}
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
 
