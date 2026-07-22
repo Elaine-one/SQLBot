@@ -122,6 +122,7 @@ class ChatRecord(SQLModel, table=True):
     analysis: str = Field(sa_column=Column(Text, nullable=True))
     predict: str = Field(sa_column=Column(Text, nullable=True))
     predict_data: str = Field(sa_column=Column(Text, nullable=True))
+    execution_log: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
     recommended_question_answer: str = Field(sa_column=Column(Text, nullable=True))
     recommended_question: str = Field(sa_column=Column(Text, nullable=True))
     datasource_select_answer: str = Field(sa_column=Column(Text, nullable=True))
@@ -130,6 +131,7 @@ class ChatRecord(SQLModel, table=True):
     analysis_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
     predict_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
     regenerate_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
+    execution_log: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
 
 
 class ChatRecordResult(BaseModel):
@@ -149,6 +151,7 @@ class ChatRecordResult(BaseModel):
     analysis: Optional[str] = None
     predict: Optional[str] = None
     predict_data: Optional[str] = None
+    execution_log: Optional[dict] = None
     recommended_question: Optional[str] = None
     datasource_select_answer: Optional[str] = None
     finish: Optional[bool] = None
@@ -162,6 +165,7 @@ class ChatRecordResult(BaseModel):
     predict_reasoning_content: Optional[str] = None
     duration: Optional[float] = None  # 耗时字段（单位：秒）
     total_tokens: Optional[int] = None  # token总消耗
+    execution_log: Optional[dict] = None
 
 
 class CreateChat(BaseModel):
@@ -239,17 +243,14 @@ class AiModelQuestion(BaseModel):
         _base_template = get_sql_template()
         _process_check = _sql_template.get('process_check') if _sql_template.get('process_check') else _base_template[
             'process_check']
-        _query_limit = _base_template['query_limit'] if enable_query_limit else _base_template['no_query_limit']
+        _query_limit = _base_template['query_limit']
         _other_rule = _sql_template['other_rule'].format(multi_table_condition=_base_template['multi_table_condition'])
         _base_sql_rules = _sql_template['quot_rule'] + _query_limit + _sql_template['limit_rule'] + _other_rule
         _sql_examples = _sql_template['basic_example']
         _example_engine = _sql_template['example_engine']
-        _example_answer_1 = _sql_template['example_answer_1_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_1']
-        _example_answer_2 = _sql_template['example_answer_2_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_2']
-        _example_answer_3 = _sql_template['example_answer_3_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_3']
+        _example_answer_1 = _sql_template['example_answer_1_with_limit']
+        _example_answer_2 = _sql_template['example_answer_2_with_limit']
+        _example_answer_3 = _sql_template['example_answer_3_with_limit']
 
         templates['system'] = _base_template['system'].format(lang=self.lang, process_check=_process_check, sqlbot_name=self.sqlbot_name)
         templates['rules'] = _base_template['generate_rules'].format(lang=self.lang,
