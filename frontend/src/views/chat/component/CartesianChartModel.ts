@@ -229,10 +229,26 @@ export function buildCartesianModel(
     })
   }
 
+  // Step 7½: line chart with sparse series → drop color channel.
+  //   Each series needs ≥2 points to form a visible line segment.
+  //   When avg points/series < 2 (e.g. 5 rows ÷ 5 unique categories = 1),
+  //   drawing separate lines produces invisible single-dot "lines".
+  let colorAxis = seriesAxes.length > 0 ? seriesAxes[0] : null
+  if (chartType === 'line' && colorAxis) {
+    const seriesCount = new Set(percentResult.data.map((d) => String(d[colorAxis!.value] ?? ''))).size
+    if (seriesCount > 1 && percentResult.data.length / seriesCount < 2) {
+      console.warn(
+        `[CartesianChartModel] line chart series too sparse ` +
+        `(${percentResult.data.length} pts ÷ ${seriesCount} series = ${(percentResult.data.length / seriesCount).toFixed(1)} avg) → ` +
+        `dropping color channel for better readability`
+      )
+      colorAxis = null
+    }
+  }
+
   // Step 8: 组装 model
   const xMeta = columnMetas.find((m) => m.value === xField)!
   const yMeta = columnMetas.find((m) => m.value === yAxes[0].value)!
-  const colorAxis = seriesAxes.length > 0 ? seriesAxes[0] : null
   const colorMeta = colorAxis ? columnMetas.find((m) => m.value === colorAxis!.value) || null : null
 
   return {

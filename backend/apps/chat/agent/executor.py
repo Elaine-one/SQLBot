@@ -914,37 +914,140 @@ class AgentExecutor:
 
     @staticmethod
     def _resolve_chart_fallback(chart_type: str, query_data: dict | None) -> str:
-        """Determine the best fallback chart type when semantic validation fails.
+        """Determine the best fallback chart type based on actual data shape.
+
+        Analyzes column types (temporal / metric / categorical) from
+        query_data and picks the chart type whose channel requirements
+        the data can actually satisfy.
 
         Rules (ordered by priority):
-          1. column/bar → line when data has a temporal dimension (time trend)
-          2. pie       → column when ratio/negative issues
-          3. anything  → table as universal fallback
+          1. column/bar with temporal-only dims → line  (time trend)
+          2. column/bar with categorical dims    → column (keep)
+          3. pie with ratio/negative issues      → column
+          4. line with only categorical dims     → column
+          5. anything                            → table
         """
         if not query_data:
             return "table"
 
-        from apps.chat.agent.chart_knowledge import validate_chart_semantics
+        column_profiles = AgentExecutor._profile_data_columns(query_data)
+        if not column_profiles:
+            return "table"
 
-        # Try line for column/bar (temporal x-axis is valid for line)
+        temporal_cols = [c for c in column_profiles if c["is_temporal"]]
+        metric_cols = [c for c in column_profiles if c["is_metric"]]
+        categorical_cols = [
+            c for c in column_profiles
+            if not c["is_temporal"] and not c["is_metric"]
+        ]
+
+        has_temporal = len(temporal_cols) > 0
+        has_metric = len(metric_cols) > 0
+        has_categorical = len(categorical_cols) > 0
+
+        if not has_metric:
+            return "table"  # no numeric column → can't render any chart
+
         if chart_type in ("column", "bar"):
-            test_chart = {"type": "line", "axis": {}}
-            if not validate_chart_semantics(test_chart, query_data):
+            # column/bar forbid temporal on x-axis.
+            # → line if temporal dims exist (line prefers temporal)
+            # → column if categorical dims exist
+            # → table otherwise
+            if has_temporal:
                 return "line"
-            # Try table
+            if has_categorical:
+                return "column"
             return "table"
 
-        # Try column for pie
         if chart_type == "pie":
-            test_chart = {"type": "column", "axis": {}}
-            if not validate_chart_semantics(test_chart, query_data):
-                return "column"
-            test_chart = {"type": "line", "axis": {}}
-            if not validate_chart_semantics(test_chart, query_data):
+            # pie needs 1 categorical dim + 1 positive non-ratio metric.
+            # → column/bar for comparison; line if temporal trend
+            if has_temporal:
                 return "line"
+            if has_categorical:
+                return "column"
             return "table"
+
+        if chart_type == "line":
+            # line prefers temporal/ordinal x-axis.
+            # → column/bar if only categorical dims available
+            if not has_temporal and has_categorical:
+                return "column"
+            if not has_temporal and not has_categorical:
+                return "table"
+            return "line"
 
         return "table"
+
+    @staticmethod
+    def _profile_data_columns(query_data: dict) -> list[dict]:
+        """Classify each column in query_data as temporal / metric / categorical.
+
+        Returns a list of dicts: {name, is_temporal, is_metric, sample_values}.
+        Uses the same heuristics as the frontend classifyColumn().
+        """
+        import re
+
+        fields = query_data.get("fields", []) if isinstance(query_data, dict) else []
+        data_rows = query_data.get("data", []) if isinstance(query_data, dict) else []
+        if not fields:
+            return []
+
+        TEMPORAL_NAME_RE = re.compile(
+            r"时间|日期|date|time|年|月|日|timestamp|datetime|year|month|day",
+            re.IGNORECASE,
+        )
+
+        profiles: list[dict] = []
+        for i, field in enumerate(fields):
+            name = field.get("name", f"col_{i}") if isinstance(field, dict) else str(field)
+
+            # Collect sample values for this column
+            samples: list = []
+            for row in (data_rows or [])[:50]:
+                val = None
+                if isinstance(row, (list, tuple)) and i < len(row):
+                    val = row[i]
+                elif isinstance(row, dict) and name in row:
+                    val = row[name]
+                if val is not None and val != "":
+                    samples.append(val)
+
+            # Classify
+            is_temporal = TEMPORAL_NAME_RE.search(name) is not None
+
+            non_empty = [s for s in samples if s is not None and s != ""]
+            numeric_count = 0
+            if non_empty:
+                numeric_count = sum(
+                    1 for s in non_empty
+                    if not isinstance(s, bool)
+                    and AgentExecutor._can_coerce_to_number(s)
+                )
+            is_metric = (
+                len(non_empty) > 0 and numeric_count / len(non_empty) >= 0.8
+            )
+
+            profiles.append({
+                "name": name,
+                "is_temporal": is_temporal,
+                "is_metric": is_metric and not is_temporal,  # temporal wins
+                "sample_values": samples,
+            })
+
+        return profiles
+
+    @staticmethod
+    def _can_coerce_to_number(value) -> bool:
+        """Check if a value can be interpreted as a number."""
+        try:
+            s = str(value).replace(",", "").replace("%", "").strip()
+            if not s:
+                return False
+            float(s)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     # ── _generate_chart (with self-correction loop) ────────────────────────
 

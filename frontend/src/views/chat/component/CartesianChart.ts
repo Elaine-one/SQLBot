@@ -25,10 +25,22 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const COLOR_PALETTES: Record<string, string[]> = {
-  default: ['#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E8684A', '#6DC8EC', '#9270CA', '#FF9D4D', '#269A99', '#FF99C3'],
-  warm: ['#F6BD16', '#E8684A', '#FF9D4D', '#F08BB4', '#D580FF', '#FFB366', '#FF6B6B', '#FFD93D', '#FF8C42', '#E84855'],
-  cool: ['#5B8FF9', '#5AD8A6', '#5D7092', '#36B4C6', '#3299FE', '#4ECDC4', '#2E86AB', '#6CB4EE', '#7EC8E3', '#A0D2DB'],
-  business: ['#1B3A5C', '#2E6B8F', '#47A1C7', '#6CBDDB', '#A8D8EA', '#0D2137', '#3485A9', '#59B0C9', '#8CCFE8', '#C2E5F2'],
+  default: [
+    '#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#B07AA1',
+    '#FF9DA7', '#9C755F', '#BAB0AC', '#59A14F', '#EDC948',
+  ],
+  warm: [
+    '#E15759', '#F28E2B', '#E8A838', '#D4756B', '#F19C9C',
+    '#C44E52', '#FFB547', '#E87D3A', '#D98B8B', '#B8860B',
+  ],
+  cool: [
+    '#4E79A7', '#76B7B2', '#A0CBE8', '#8CD17D', '#B07AA1',
+    '#499894', '#72A8D0', '#54A873', '#9D8DC5', '#86BCB6',
+  ],
+  business: [
+    '#2C3E50', '#2980B9', '#E74C3C', '#27AE60', '#F39C12',
+    '#8E44AD', '#16A085', '#D35400', '#7F8C8D', '#C0392B',
+  ],
 }
 
 export class CartesianChart extends BaseG2Chart {

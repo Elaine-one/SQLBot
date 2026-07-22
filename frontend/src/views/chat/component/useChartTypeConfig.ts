@@ -132,7 +132,7 @@ const FALLBACK_CONFIG: ChartTypeConfig = {
     },
     column: {
       typeId: 'column', displayName: '柱状图', icon: 'column', category: 'comparison',
-      compatibleWith: ['bar', 'line'], dataConstraints: {
+      compatibleWith: ['bar', 'line', 'pie'], dataConstraints: {
         min_metrics: 1, min_dimensions: 1,
         requiredChannels: {
           x: { type: 'dimension', forbidden: ['temporal'], maxCardinality: 60 },
@@ -153,7 +153,7 @@ const FALLBACK_CONFIG: ChartTypeConfig = {
     },
     bar: {
       typeId: 'bar', displayName: '条形图', icon: 'bar', category: 'comparison',
-      compatibleWith: ['column', 'line'], dataConstraints: {
+      compatibleWith: ['column', 'line', 'pie'], dataConstraints: {
         min_metrics: 1, min_dimensions: 1,
         requiredChannels: {
           x: { type: 'dimension', forbidden: ['temporal'], maxCardinality: 60 },
@@ -174,7 +174,7 @@ const FALLBACK_CONFIG: ChartTypeConfig = {
     },
     line: {
       typeId: 'line', displayName: '折线图', icon: 'line', category: 'trend',
-      compatibleWith: ['column', 'bar'], dataConstraints: {
+      compatibleWith: ['column', 'bar', 'pie'], dataConstraints: {
         min_metrics: 1, min_dimensions: 1,
         requiredChannels: {
           x: { type: 'dimension', preferred: ['temporal', 'ordinal'], maxCardinality: 500 },
