@@ -1,4 +1,5 @@
 import { BaseChart, type ChartAxis, type ChartData } from '@/views/chat/component/BaseChart.ts'
+import { toRaw } from 'vue'
 import {
   copyToClipboard,
   type S2DataConfig,
@@ -9,7 +10,7 @@ import {
   TableSheet,
   type SortFuncParam,
 } from '@antv/s2'
-import { debounce, filter } from 'lodash-es'
+import { debounce } from 'lodash-es'
 import { i18n } from '@/i18n'
 import { formatNumber } from '@/views/chat/component/charts/utils.ts'
 import '@antv/s2/dist/s2.min.css'
@@ -72,6 +73,8 @@ const createSmartSortFunc = (sortMethod: string) => {
 
 export class Table extends BaseChart {
   table?: TableSheet = undefined
+  /** S2 表格使用 ResizeObserver + 200ms debounce，非实时缩放 */
+  readonly isLiveResizable: boolean = false
 
   container: S2MountContainer | null = null
 
@@ -100,11 +103,64 @@ export class Table extends BaseChart {
     }
   }
 
+  applyPostInitSettings(settings: Record<string, any>): void {
+    if (!this.table) return
+
+    // 排序（仅当用户显式选择排序列时才生效，避免默认按首列排序）
+    if (settings.sort_column) {
+      let col = settings.sort_column
+      if (typeof col === 'string') {
+        const matched = this.axis.find((a) => a.name === col)
+        if (matched) col = matched.value
+      }
+      const order = settings.sort_order || 'desc'
+      if (col) {
+        const sortParams = [{
+          sortFieldId: col,
+          sortMethod: order === 'asc' ? 'asc' : ('desc' as SortMethod),
+          sortFunc: createSmartSortFunc(order),
+        }]
+        this.table.setDataCfg({ sortParams } as any)
+      }
+    }
+
+    // 分页
+    if (settings.page_size) {
+      this.table.setOptions({ pagination: { current: 1, pageSize: settings.page_size } })
+    }
+  }
+
   init(axis: Array<ChartAxis>, data: Array<ChartData>) {
-    super.init(
-      filter(axis, (a) => !a.hidden), //隐藏多指标的other-info列
-      data
-    )
+    // 过滤 + 去重：只保留 value 为有效字符串的轴，避免 S2 内部读取 undefined.rows 报错
+    const seen = new Set<string>()
+    const deduped: Array<ChartAxis> = []
+    for (const a of axis) {
+      const value = a.value == null ? '' : String(a.value).trim()
+      if (!value || a.hidden || seen.has(value)) continue
+      seen.add(value)
+      // 创建新对象，避免修改传入的 axis 引用
+      deduped.push({ ...a, value })
+    }
+    super.init(deduped, data)
+
+    // 防御：无列或无数据时不创建 S2 实例
+    if (!this.axis || this.axis.length === 0 || !this.data || this.data.length === 0) {
+      console.warn('[Table] init skipped: empty axis or data', { axis: this.axis, data: this.data })
+      return
+    }
+
+    const numberFmt = this.numberFormat
+
+    // 先 toRaw() 解包 Vue Proxy，再 structuredClone 深拷贝（比 JSON round-trip 快 3-5 倍）
+    let plainData: Array<ChartData> = []
+    if (this.data) {
+      const raw = toRaw(this.data)
+      try {
+        plainData = structuredClone(raw)
+      } catch {
+        plainData = JSON.parse(JSON.stringify(raw))
+      }
+    }
 
     const s2DataConfig: S2DataConfig = {
       sortParams:
@@ -115,6 +171,9 @@ export class Table extends BaseChart {
         }) ?? [],
       fields: {
         columns: this.axis?.map((a) => a.value) ?? [],
+        rows: [],
+        values: [],
+        valueInCols: false,
       },
       meta:
         this.axis?.map((a) => {
@@ -122,12 +181,12 @@ export class Table extends BaseChart {
             field: a.value,
             name: a.name,
             formatter: (value: any) => {
-              const formatted = formatNumber(value)
+              const formatted = formatNumber(value, numberFmt)
               return String(formatted)
             },
           }
         }) ?? [],
-      data: this.data,
+      data: plainData,
     }
 
     const sortState: Record<string, string> = {}
@@ -201,7 +260,7 @@ export class Table extends BaseChart {
             container.style.fontSize = '14px'
             container.style.whiteSpace = 'pre-wrap'
 
-            const formattedValue = formatNumber(meta.fieldValue)
+            const formattedValue = formatNumber(meta.fieldValue, numberFmt)
             const text = document.createTextNode(String(formattedValue))
             container.appendChild(text)
 
@@ -232,7 +291,17 @@ export class Table extends BaseChart {
     }
 
     if (this.container) {
-      this.table = new TableSheet(this.container, s2DataConfig, s2Options)
+      try {
+        this.table = new TableSheet(this.container, s2DataConfig, s2Options)
+        // S2 在 TableSheet 构造函数中不会立即初始化 dataSet.fields，
+        // 而 TableFacet 构造函数里会直接读取 dataSet.fields 做布局，
+        // 若首次 render 前 fields 未初始化会抛 "reading 'rows'"。
+        // 手动同步 setDataCfg 一次，确保 fields 就绪。
+        this.table.dataSet.setDataCfg(this.table.dataCfg)
+      } catch (e) {
+        console.error('[Table] TableSheet creation failed', e, s2DataConfig)
+        return
+      }
       // right click
       this.table.on(S2Event.GLOBAL_COPIED, (data) => {
         ElMessage.success(t('qa.copied'))
@@ -255,6 +324,52 @@ export class Table extends BaseChart {
   destroy() {
     this.table?.destroy()
     this.resizeObserver?.disconnect()
+    // 清空容器 DOM，防止 S2 Canvas 在图表类型切换后残留
+    if (this.container && typeof this.container !== 'string') {
+      const el = this.container as HTMLElement
+      el.innerHTML = ''
+    }
+  }
+
+  applySettings(settings: Record<string, any>): void | Promise<void> {
+    console.log(`[Table] applySettings | axisLen=${this.axis?.length} | dataLen=${this.data?.length} | hasTable=${!!this.table} | needsReinit=${settings.number_format !== undefined}`)
+
+    if (!this.axis || this.axis.length === 0 || !this.data || this.data.length === 0) {
+      console.warn(`[Table] applySettings BAILED: empty axis or data`)
+      return
+    }
+
+    let needsReinit = false
+
+    // number_format 变更需要重建 init —— 列格式化器在 init() 的 meta 中设定，
+    // S2 不支持动态更新 formatter，所以必须销毁后重建
+    if (settings.number_format !== undefined) {
+      const validFormats: Array<'full' | 'abbreviated' | 'percent'> = ['full', 'abbreviated', 'percent']
+      const newFormat = validFormats.includes(settings.number_format) ? settings.number_format : 'abbreviated'
+      if (this.numberFormat !== newFormat) {
+        this.numberFormat = newFormat
+        needsReinit = true
+      }
+    }
+
+    // 首次渲染或 number_format 变化时重建 S2 实例
+    if (needsReinit || !this.table) {
+      console.log(`[Table] calling init() | needsReinit=${needsReinit} | hasTable=${!!this.table}`)
+      this.table?.destroy()
+      this.init(this.axis, this.data)
+      console.log(`[Table] init done | hasTable=${!!this.table}`)
+    }
+
+    // init 失败（如无列/无数据）则直接返回
+    if (!this.table) {
+      console.warn(`[Table] init failed: table is null`)
+      return
+    }
+
+    // 确保排序、分页等设置在实例创建后应用
+    this.applyPostInitSettings(settings)
+
+    return this.table.render(false)
   }
 }
 

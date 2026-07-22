@@ -2,10 +2,15 @@ import { BaseG2Chart } from '@/views/chat/component/BaseG2Chart.ts'
 import type { ChartAxis, ChartData } from '@/views/chat/component/BaseChart.ts'
 import type { G2Spec } from '@antv/g2'
 import {
+  buildAxisTitle,
   checkIsPercent,
+  fallbackXYAxes,
   formatNumber,
   getAxesWithFilter,
+  inferAxisUnit,
+  isTimeField,
   processMultiQuotaData,
+  sortDataByTimeField,
 } from '@/views/chat/component/charts/utils.ts'
 
 export class Line extends BaseG2Chart {
@@ -16,10 +21,19 @@ export class Line extends BaseG2Chart {
   init(axis: Array<ChartAxis>, data: Array<ChartData>) {
     super.init(axis, data)
 
+    const numberFmt = this.numberFormat
     const axes = getAxesWithFilter(this.axis)
 
     if (axes.x.length == 0 || axes.y.length == 0) {
-      console.debug({ instance: this })
+      // axis 类型缺失时的安全兜底（常见于 AI 选 table 后手动切换到可视化图表）
+      const fallback = fallbackXYAxes(this.axis, data)
+      if (fallback.x) axes.x = [{ ...fallback.x, type: 'x' }]
+      if (fallback.y) axes.y = [{ ...fallback.y, type: 'y' }]
+    }
+
+    if (axes.x.length == 0 || axes.y.length == 0) {
+      console.warn('[Line] init skipped: no x/y axis', { axis: this.axis, axes })
+      this._initOk = false
       return
     }
 
@@ -44,10 +58,26 @@ export class Line extends BaseG2Chart {
 
     const _data = checkIsPercent(y, config.data)
 
+    // 若 X 轴是时间维度，按时间升序排序，避免折线在未排序的时间点间乱穿
+    const xField = x[0].value
+    const xIsTime = isTimeField(_data.data, xField)
+    if (xIsTime) {
+      _data.data = sortDataByTimeField(_data.data, xField)
+    }
+
+    // 非时间维度下，按 Y 值排序（对副本操作，不污染原始 this.data）
+    if (!xIsTime && this._sortOrder !== 'none') {
+      const yField = y[0].value
+      _data.data.sort((a, b) => {
+        const va = Number(a[yField]) || 0
+        const vb = Number(b[yField]) || 0
+        return this._sortOrder === 'asc' ? va - vb : vb - va
+      })
+    }
+
     console.debug({ 'render-info': { x: x, y: y, series: series, data: _data }, instance: this })
 
     const options: G2Spec = {
-      ...this.chart.options(),
       type: 'view',
       data: _data.data,
       encode: {
@@ -57,21 +87,19 @@ export class Line extends BaseG2Chart {
       },
       axis: {
         x: {
-          title: false, // x[0].name,
+          title: { text: x[0].name || x[0].value },
           labelFontSize: 12,
-          labelAutoHide: {
-            type: 'hide',
-            keepHeader: true,
-            keepTail: true,
-          },
-          labelAutoRotate: false,
+          labelAutoHide: xIsTime
+            ? { type: 'hide', keepHeader: true, keepTail: true }
+            : true,
+          labelAutoRotate: !xIsTime,
           labelAutoWrap: true,
           labelAutoEllipsis: true,
         },
         y: {
-          title: false, // y[0].name,
+          title: { text: buildAxisTitle(y[0].name, inferAxisUnit(y[0].name)) },
           labelFormatter: (value: any) => {
-            return String(formatNumber(value))
+            return String(formatNumber(value, numberFmt))
           },
         },
       },
@@ -86,10 +114,15 @@ export class Line extends BaseG2Chart {
       },
       children: [
         {
-          type: 'line',
-          encode: {
-            shape: 'smooth',
+          // 面积层：默认完全透明，show_area=true 时通过 applier 调整透明度
+          type: 'area',
+          style: {
+            opacity: 0,
           },
+          tooltip: false,
+        },
+        {
+          type: 'line',
           labels: this.showLabel
             ? [
                 {
@@ -98,7 +131,7 @@ export class Line extends BaseG2Chart {
                     if (value === undefined || value === null) {
                       return ''
                     }
-                    return `${formatNumber(value)}${_data.isPercent ? '%' : ''}`
+                    return `${formatNumber(value, numberFmt)}${_data.isPercent ? '%' : ''}`
                   },
                   style: {
                     dx: -10,
@@ -112,33 +145,35 @@ export class Line extends BaseG2Chart {
                 },
               ]
             : [],
-          tooltip: (data: any) => {
-            if (series.length > 0) {
-              return {
-                name: data[series[0].value],
-                value: `${formatNumber(data[y[0].value])}${_data.isPercent ? '%' : ''}`,
-              }
-            } else {
-              return {
-                name: y[0].name,
-                value: `${formatNumber(data[y[0].value])}${_data.isPercent ? '%' : ''}`,
-              }
-            }
-          },
+          // G2 v5.3.3 mark-level tooltip 不支持 function callback。
+          // 设 false 禁用 mark 级别 tooltip，由 view 层默认 tooltip 交互统一处理。
+          tooltip: false,
         },
         {
+          // 数据点层：默认隐藏，show_points=true 时通过 applier 显示
           type: 'point',
           style: {
             fill: 'white',
+            opacity: 0,
           },
           encode: {
-            size: 1.5,
+            size: 2.5,
           },
           tooltip: false,
         },
       ],
     } as G2Spec
 
+    this._applySettingsToOptions(options, this._activeSettings || {})
+
     this.chart.options(options)
+    this._initOk = true
+  }
+
+  protected _applyTypeSettings(settings: Record<string, any>): void {
+    if (settings.show_label !== undefined) {
+      this.showLabel = settings.show_label
+    }
+    super._applyTypeSettings(settings)
   }
 }

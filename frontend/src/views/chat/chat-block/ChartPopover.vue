@@ -2,9 +2,18 @@
 import icon_done_outlined from '@/assets/svg/icon_done_outlined.svg'
 import { computed, ref } from 'vue'
 import icon_expand_down_filled from '@/assets/svg/icon_down_outlined.svg'
+
+interface ChartTypeOption {
+  value: string
+  name: string
+  icon: any
+  score?: number
+  reasons?: string[]
+}
+
 const props = defineProps({
   chartTypeList: {
-    type: Array<any>,
+    type: Array as () => ChartTypeOption[],
     default: () => [],
   },
   chartType: {
@@ -16,28 +25,31 @@ const props = defineProps({
     default: '',
   },
 })
+
 const currentIcon = computed(() => {
   if (props.chartType === 'table') {
     const [ele] = props.chartTypeList || []
-    if (ele.icon) {
-      return ele.icon
-    }
-    return null
+    return ele?.icon || null
   }
-  return props.chartTypeList.find((ele) => ele.value === props.chartType).icon
+  return props.chartTypeList.find((ele) => ele.value === props.chartType)?.icon || null
 })
 
-const firstItem = () => {
-  if (props.chartType === 'table') {
-    const [ele] = props.chartTypeList || []
-    handleDefaultChatChange(ele || {})
-  }
-}
+// 按兼容性评分排序（高分在前）
+const sortedList = computed(() => {
+  return [...props.chartTypeList].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+})
+
 const emits = defineEmits(['typeChange'])
 const selectRef = ref()
-const handleDefaultChatChange = (val: any) => {
+const handleDefaultChatChange = (val: ChartTypeOption) => {
   emits('typeChange', val.value)
   selectRef.value?.hide()
+}
+
+function scoreColor(score: number): string {
+  if (score >= 70) return '#1CBA90'
+  if (score >= 40) return '#F6BD16'
+  return '#E8684A'
 }
 </script>
 
@@ -47,9 +59,9 @@ const handleDefaultChatChange = (val: any) => {
       <div
         class="chat-select_type"
         :class="chartType && chartType !== 'table' && 'active'"
-        @click="firstItem"
       >
-        <component :is="currentIcon" />
+        <component :is="currentIcon" v-if="currentIcon" />
+        <span v-else class="icon-fallback">{{ chartType }}</span>
         <el-icon style="color: #646a73" class="expand" size="12">
           <icon_expand_down_filled></icon_expand_down_filled>
         </el-icon>
@@ -59,14 +71,15 @@ const handleDefaultChatChange = (val: any) => {
       <div class="popover-content">
         <div v-if="!!title" class="title">{{ title }}</div>
         <div
-          v-for="ele in chartTypeList"
+          v-for="ele in sortedList"
           :key="ele.name"
           class="popover-item"
           :class="chartType === ele.value && 'isActive'"
           @click="handleDefaultChatChange(ele)"
         >
           <el-icon style="color: #646a73" size="16">
-            <component :is="ele.icon" :class="chartType === ele.value && 'icon-primary'" />
+            <component :is="ele.icon" v-if="ele.icon" :class="chartType === ele.value && 'icon-primary'" />
+            <span v-else class="icon-fallback">{{ ele.value }}</span>
           </el-icon>
           <div class="model-name">{{ ele.name }}</div>
           <el-icon size="16" class="done">
@@ -124,7 +137,14 @@ const handleDefaultChatChange = (val: any) => {
         font-weight: 400;
         font-size: 14px;
         line-height: 22px;
-        max-width: 220px;
+        max-width: 160px;
+      }
+
+      .compat-score {
+        margin-left: 6px;
+        font-size: 11px;
+        font-weight: 500;
+        opacity: 0.8;
       }
 
       .done {
@@ -156,6 +176,14 @@ const handleDefaultChatChange = (val: any) => {
 
   .expand {
     margin-left: 4px;
+  }
+
+  .icon-fallback {
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 24px;
+    text-transform: uppercase;
+    color: inherit;
   }
 
   &:hover {

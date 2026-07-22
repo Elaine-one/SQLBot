@@ -33,15 +33,14 @@ function getOptions(type, axis, data) {
         }
     }
 
-    switch (type) {
-        case 'bar':
-            return getBarOptions(base_options, axis, data);
-        case 'column':
-            return getColumnOptions(base_options, axis, data);
-        case 'line':
-            return getLineOptions(base_options, axis, data);
-        case 'pie':
-            return getPieOptions(base_options, axis, data);
+    try {
+        const mod = require(`./charts/${type}.js`);
+        const fnName = `get${type.charAt(0).toUpperCase() + type.slice(1)}Options`;
+        if (typeof mod[fnName] === 'function') {
+            return mod[fnName](base_options, axis, data);
+        }
+    } catch (e) {
+        console.warn(`SSR chart '${type}' unavailable, falling back to default`);
     }
 
     return base_options
