@@ -33,6 +33,9 @@ def _lazy_import_tools() -> dict:
         ask_for_clarification,
         analyze_query_result,
         load_skill,
+        get_data_summary,
+        get_data_preview,
+        search_web,
     )
     return {
         "search_relevant_tables": search_relevant_tables,
@@ -48,6 +51,9 @@ def _lazy_import_tools() -> dict:
         "ask_for_clarification": ask_for_clarification,
         "analyze_query_result": analyze_query_result,
         "load_skill": load_skill,
+        "get_data_summary": get_data_summary,
+        "get_data_preview": get_data_preview,
+        "search_web": search_web,
     }
 
 
@@ -153,15 +159,43 @@ _TOOL_DEFS: list[dict] = [
          parameters={"type": "object",
              "properties": {"skill_id": {"type": "string", "description": "技能 ID，如 sql-postgresql"}},
              "required": ["skill_id"]}),
+    dict(name="get_data_summary", fn_key="get_data_summary", terminal=False, category="explore",
+         description="获取查询结果的字段统计摘要。返回每个字段的 min/max/avg/distinct_count 等统计信息，帮助快速了解数据分布，决定下一步分析方向。纯内存操作，无 I/O 开销。",
+         parameters={"type": "object",
+             "properties": {"record_id": {"type": "string", "description": "要统计的查询 record_id"}},
+             "required": ["record_id"]}),
+    dict(name="get_data_preview", fn_key="get_data_preview", terminal=False, category="explore",
+         description="分页查看查询结果的具体数据行（每页 20 行）。在数据分析过程中按需翻阅数据，避免一次性加载全部数据到上下文。纯内存操作，无 I/O 开销。",
+         parameters={"type": "object",
+             "properties": {
+                 "record_id": {"type": "string", "description": "要查看的查询 record_id"},
+                 "offset": {"type": "integer", "description": "起始行号，从 0 开始，默认 0"},
+                 "limit": {"type": "integer", "description": "返回行数，默认 20，最大 100"},
+             },
+             "required": ["record_id", "offset", "limit"]}),
+    dict(name="search_web", fn_key="search_web", terminal=False, category="explore",
+         description="异步搜索互联网获取外部信息（预测 Agent 专用）。用于获取行业趋势、市场动态、最新热点等外部上下文辅助预测。连接超时 3s，请求超时 5s，结果缓存 5 分钟。失败时返回空结果，不阻塞预测流程。",
+         parameters={"type": "object",
+             "properties": {
+                 "query": {"type": "string", "description": "搜索关键词，用简洁的中文或英文描述要搜索的主题"},
+                 "max_results": {"type": "integer", "description": "最多返回几条结果，默认 5"},
+             },
+             "required": ["query"]}),
 ]
 
 
-def register_all_tools() -> int:
-    """Register all Phase 1 tools. Returns count of registered tools.
+_REGISTERED: bool = False
 
-    Also pre-warms the embedding model to avoid 2+ minute cold-start
-    on the first search_relevant_tables call.
+
+def register_all_tools() -> int:
+    """Register all tools. Idempotent — second call is a no-op.
+
+    Returns count of registered tools.
     """
+    global _REGISTERED
+    if _REGISTERED:
+        return ToolRegistry.count()
+
     try:
         fns = _lazy_import_tools()
     except ImportError as e:
@@ -189,6 +223,7 @@ def register_all_tools() -> int:
     # Pre-warm embedding model (loads once, cached by EmbeddingModelCache)
     _warm_embedding_model()
 
+    _REGISTERED = True
     return len(_TOOL_DEFS)
 
 

@@ -1104,7 +1104,7 @@ class LLMService:
             limit = 1000
             if data_result:
                 data_result = prepare_for_orjson(data_result)
-                if data_result and len(data_result) > limit and self.enable_sql_row_limit:
+                if data_result and len(data_result) > limit:
                     data_obj['data'] = data_result[:limit]
                     data_obj['limit'] = limit
                 else:
@@ -1128,17 +1128,17 @@ class LLMService:
         Returns:
             Query results
         """
-        # SQL syntax validation is now handled by Agent's create_sql_query tool
-        # (sqlglot.parse) before execution. The old ;) cleanup is no longer needed.
         SQLBotLogUtil.info(f"Executing SQL on ds_id {self.ds.id}: {sql}")
         try:
             return exec_sql(ds=self.ds, sql=sql, origin_column=False)
+        except ValueError as e:
+            # check_sql_read 拦截非法 SQL，直接传递用户友好提示
+            raise SQLBotDBError(str(e))
+        except ParseSQLResultError:
+            raise
         except Exception as e:
-            if isinstance(e, ParseSQLResultError):
-                raise e
-            else:
-                err = traceback.format_exc(limit=1, chain=True)
-                raise SQLBotDBError(err)
+            err = traceback.format_exc(limit=1, chain=True)
+            raise SQLBotDBError(err)
 
     def pop_chunk(self):
         try:
@@ -1453,8 +1453,15 @@ class LLMService:
                 error_msg = orjson.dumps(
                     {'message': str(e), 'type': 'db-connection-err'}).decode()
             elif isinstance(e, SQLBotDBError):
+                # ValueError 来自 check_sql_read 拦截，已是用户友好提示；
+                # 其他异常是 traceback，需要简化为通用提示
+                err_str = str(e)
+                if err_str and len(err_str) < 200 and 'Traceback' not in err_str:
+                    message = err_str
+                else:
+                    message = 'SQL 执行失败，请检查 SQL 语法或数据源连接'
                 error_msg = orjson.dumps(
-                    {'message': 'Execute SQL Failed', 'traceback': str(e), 'type': 'exec-sql-err'}).decode()
+                    {'message': message, 'traceback': err_str, 'type': 'exec-sql-err'}).decode()
             else:
                 error_msg = orjson.dumps({'message': str(e), 'traceback': traceback.format_exc(limit=1)}).decode()
             if _session:

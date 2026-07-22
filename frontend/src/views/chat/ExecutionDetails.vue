@@ -16,6 +16,7 @@ import LogDataQuery from './execution-component/LogDataQuery.vue'
 import LogChooseTable from './execution-component/LogChooseTable.vue'
 import LogGeneratePicture from './execution-component/LogGeneratePicture.vue'
 import LogWithAi from '@/views/chat/execution-component/LogWithAi.vue'
+import LogAgentTool from '@/views/chat/execution-component/LogAgentTool.vue'
 
 const { t } = useI18n()
 const logHistory = ref<ChatLogHistory>({})
@@ -31,12 +32,32 @@ const handleExpand = (index: number) => {
   }
 }
 
-function getLogList(recordId: any) {
+function getLogList(recordId: any, executionLog?: Record<string, any> | null) {
   setDrawerSize()
-  chatApi.get_chart_log_history(recordId).then((res) => {
-    logHistory.value = chatApi.toChatLogHistory(res) as ChatLogHistory
-    dialogFormVisible.value = true
-  })
+  if (executionLog && executionLog.tools) {
+    // Agent path: build logHistory from execution_log
+    logHistory.value = {
+      total_tokens: executionLog.tokens?.total ?? 0,
+      duration: ((executionLog.duration_ms ?? 0) / 1000).toFixed(1),
+      iterations: executionLog.iterations ?? 0,
+      steps: (executionLog.tools || []).map((t: any, i: number) => ({
+        operate: t.name,
+        operate_key: 'AGENT_TOOL',
+        duration: ((t.elapsed_ms ?? 0) / 1000).toFixed(2),
+        total_tokens: 0,
+        summary: t.summary || '',
+        error: (t.summary || '').startsWith('失败'),
+        index: i,
+        item: t,
+      })),
+    } as any
+  } else {
+    // Old pipeline path: fetch from chat_log table
+    chatApi.get_chart_log_history(recordId).then((res: any) => {
+      logHistory.value = chatApi.toChatLogHistory(res) as ChatLogHistory
+    })
+  }
+  dialogFormVisible.value = true
 }
 
 const setDrawerSize = debounce(() => {
@@ -119,6 +140,7 @@ defineExpose({
           <LogChooseTable v-else-if="ele.operate_key === 'CHOOSE_TABLE'" :item="ele" />
           <LogDataQuery v-else-if="ele.operate_key === 'EXECUTE_SQL'" :item="ele" />
           <LogGeneratePicture v-else-if="ele.operate_key === 'GENERATE_PICTURE'" :item="ele" />
+          <LogAgentTool v-else-if="ele.operate_key === 'AGENT_TOOL'" :item="ele" />
           <LogWithAi v-else :item="ele" />
         </div>
       </div>

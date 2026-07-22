@@ -209,3 +209,11 @@ start-external-pg.sh
 
 # Local analysis docs
 docs/
+
+# ── Local debug & temp ──
+.dbg/
+*.db
+debug-*.md
+
+# ── Large assets (managed outside git) ──
+g2-ssr/Arial_Unicode.ttf

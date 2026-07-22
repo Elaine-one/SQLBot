@@ -38,7 +38,8 @@ wlist = [
     "/system/authentication/sso/*",
     "/system/platform/sso/*",
     "/system/platform/client/*",
-    "/system/parameter/login"
+    "/system/parameter/login",
+    "/chat/chart-types",
 ]
 
 class WhitelistChecker:

@@ -126,6 +126,10 @@ class Settings(BaseSettings):
 
     ORACLE_CLIENT_PATH: str = '/opt/sqlbot/db_client/oracle_instant_client'
 
+    # ── Bing Web Search (Lite scraping, no API key) ───
+    BING_SEARCH_TIMEOUT: int = 10  # seconds per request
+    BING_SEARCH_MAX_RESULTS: int = 5
+
     @field_validator('SQL_DEBUG',
                      'EMBEDDING_ENABLED',
                      'GENERATE_SQL_QUERY_LIMIT_ENABLED',

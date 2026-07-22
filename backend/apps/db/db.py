@@ -586,8 +586,9 @@ def exec_sql(ds: CoreDatasource | AssistantOutDsSchema, sql: str, origin_column=
     while sql.endswith(';'):
         sql = sql[:-1]
     # check execute sql only contain read operations
-    if not check_sql_read(sql, ds):
-        raise ValueError(f"SQL can only contain read operations")
+    is_safe, reason = check_sql_read(sql, ds)
+    if not is_safe:
+        raise ValueError(reason)
 
     db = DB.get_db(ds.type)
     if db.connect_type == ConnectType.sqlalchemy:
@@ -723,6 +724,12 @@ def exec_sql(ds: CoreDatasource | AssistantOutDsSchema, sql: str, origin_column=
 
 
 def check_sql_read(sql: str, ds: CoreDatasource | AssistantOutDsSchema):
+    """
+    SQL 安全检查：返回 (is_safe: bool, reason: str)
+
+    - 第一层：关键词检查，拦截 INSERT / DELETE / DROP 等写操作
+    - 第二层：sqlglot AST 解析，拦截子查询中的写操作
+    """
     try:
         normalized_sql = sql.strip().lstrip("(").strip()
         first_keyword = normalized_sql.split(None, 1)[0].upper() if normalized_sql else ""
@@ -736,7 +743,7 @@ def check_sql_read(sql: str, ds: CoreDatasource | AssistantOutDsSchema):
         if not first_keyword:
             raise ValueError("Parse SQL Error")
         if first_keyword in denied_write_commands:
-            return False
+            return False, f"禁止的 SQL 操作「{first_keyword}」。SQLBot 仅支持数据查询（SELECT / WITH），不支持增删改操作。"
 
         dialect = None
         if equals_ignore_case(ds.type, 'mysql', 'doris', 'starrocks'):
@@ -757,16 +764,27 @@ def check_sql_read(sql: str, ds: CoreDatasource | AssistantOutDsSchema):
             exp.Merge, exp.Copy
         )
 
+        write_type_names = {
+            exp.Insert: "INSERT", exp.Update: "UPDATE", exp.Delete: "DELETE",
+            exp.Create: "CREATE", exp.Drop: "DROP", exp.Alter: "ALTER",
+            exp.Merge: "MERGE", exp.Copy: "COPY"
+        }
+
         for stmt in statements:
             if stmt is None:
                 continue
-            if isinstance(stmt, write_types):
-                return False
+            for wt in write_types:
+                if isinstance(stmt, wt):
+                    op_name = write_type_names.get(wt, "WRITE")
+                    return False, f"SQL 中包含禁止的写操作「{op_name}」。SQLBot 仅支持数据查询，请使用 SELECT / WITH 语句。"
 
-        return first_keyword in allowed_read_commands
+        if first_keyword not in allowed_read_commands:
+            return False, f"不支持的 SQL 操作「{first_keyword}」。SQLBot 仅支持: SELECT, WITH, SHOW, DESCRIBE, EXPLAIN。"
+
+        return True, ""
 
     except Exception as e:
-        raise ValueError(f"Parse SQL Error: {e}")
+        raise ValueError(f"SQL 解析失败: {e}")
 
 
 def checkParams(extraParams: str, illegalParams: List[str]):

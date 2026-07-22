@@ -99,6 +99,11 @@ const sendMessage = async () => {
   }
   if (error) return
 
+  // Init tool_calls_log for thinking display
+  if (!currentRecord.tool_calls_log) {
+    currentRecord.tool_calls_log = []
+  }
+
   try {
     const controller: AbortController = new AbortController()
     const response = await chatApi.predict(currentRecord.predict_record_id, controller)
@@ -164,21 +169,54 @@ const sendMessage = async () => {
                 currentRecord.error = data.content
                 emits('error', currentRecord.id)
                 break
-              case 'predict-result':
-                predict_answer += data.reasoning_content
-                predict_content += data.content
+              case 'reasoning':
+                predict_answer += data.content
                 _currentChat.value.records[index.value].predict = predict_answer
+                break
+              case 'text-delta':
+                predict_content += data.content
                 _currentChat.value.records[index.value].predict_content = predict_content
+                if (data.reasoning_content) {
+                  predict_answer += data.reasoning_content
+                  _currentChat.value.records[index.value].predict = predict_answer
+                }
                 break
-              case 'predict-failed':
-                emits('error', currentRecord.id)
+              case 'tool-call':
+                currentRecord.tool_calls_log.push({
+                  tool: data.tool_name,
+                  args: data.args,
+                  time: new Date(),
+                })
                 break
-              case 'predict-success':
-                //currentChat.value.records[_index].predict_data = data.content
+              case 'chart':
+                if (currentRecord.id) {
+                  chatApi.get_chart_data(currentRecord.id).then((response) => {
+                    if (response) {
+                      currentRecord.data = response
+                      console.log('[PredictAnswer] chart data loaded:', currentRecord.id)
+                    }
+                    currentRecord.chart = data.content
+                  }).catch(() => {
+                    currentRecord.chart = data.content
+                  })
+                } else {
+                  currentRecord.chart = data.content
+                }
+                break
+              case 'tool-result':
+                if (currentRecord.tool_calls_log.length > 0) {
+                  const last = currentRecord.tool_calls_log[currentRecord.tool_calls_log.length - 1]
+                  last.result = data.summary || (data.success ? 'success' : 'failed')
+                }
+                break
+              case 'execution-stats':
+                try {
+                  _currentChat.value.records[index.value].execution_log = JSON.parse(data.content)
+                } catch (e) { /* ignore */ }
+                break
+              case 'finish':
                 getChatPredictData(_currentChat.value.records[index.value].id)
                 emits('finish', currentRecord.id)
-                break
-              case 'predict_finish':
                 _loading.value = false
                 break
             }
@@ -219,6 +257,8 @@ function getChatPredictData(recordId?: number) {
 
           if (record.predict_data.length > 1) {
             getChatData(recordId)
+          } else if (record.chart) {
+            getChatData(recordId)  // Agent path: chart needs data for ChartBlock
           } else {
             loadingData.value = false
           }

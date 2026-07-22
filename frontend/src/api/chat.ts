@@ -58,6 +58,7 @@ export class ChatRecord {
   regenerate_record_id?: number
   duration?: number
   total_tokens?: number
+  execution_log?: Record<string, any> | null
   tool_calls_log?: Array<{
     tool: string
     args: any
@@ -265,7 +266,7 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
   if (!data) {
     return undefined
   }
-  return new ChatRecord(
+  const record = new ChatRecord(
     data.id,
     data.chat_id,
     data.create_time,
@@ -293,6 +294,10 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
     data.duration,
     data.total_tokens
   )
+  if (data.execution_log) {
+    record.execution_log = data.execution_log
+  }
+  return record
 }
 const toChatRecordList = (list: any = []): ChatRecord[] => {
   const records: Array<ChatRecord> = []
@@ -315,6 +320,7 @@ export class ChatLogHistoryItem {
   local_operation?: boolean | undefined
   error?: boolean | undefined
   message?: any
+  item?: any
 
   constructor()
   constructor(
