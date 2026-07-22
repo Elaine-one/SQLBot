@@ -182,7 +182,7 @@ CHART_TYPE_REGISTRY: Dict[str, ChartTypeDef] = {
                 "show_when": {"has_series": True},
             },
         },
-        compatible_with=["bar", "line"],
+        compatible_with=["bar", "line", "pie"],
         base_class="BaseG2Chart", has_ssr=True, uses_axis=True,
     ),
 
@@ -246,7 +246,7 @@ CHART_TYPE_REGISTRY: Dict[str, ChartTypeDef] = {
                 "icon": "number", "label_cn": "数值格式",
             },
         },
-        compatible_with=["column", "line"],
+        compatible_with=["column", "line", "pie"],
         base_class="BaseG2Chart", has_ssr=True, uses_axis=True,
     ),
 
@@ -318,7 +318,7 @@ CHART_TYPE_REGISTRY: Dict[str, ChartTypeDef] = {
                 "icon": "axis", "label_cn": "Y轴归零",
             },
         },
-        compatible_with=["column", "bar"],
+        compatible_with=["column", "bar", "pie"],
         base_class="BaseG2Chart", has_ssr=True, uses_axis=True,
     ),
 

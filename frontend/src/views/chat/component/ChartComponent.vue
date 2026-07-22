@@ -292,7 +292,18 @@ function _showFallbackHint(container: HTMLElement, message?: string, suggestion?
   const wrapper = document.createElement('div')
   wrapper.style.cssText =
     'height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-    'color:#8f959e;font-size:14px;padding:0 24px;text-align:center;background:#f5f6f7;gap:8px;'
+    'color:#8f959e;font-size:14px;padding:0 24px;text-align:center;gap:12px;'
+
+  // Clean chart icon instead of emoji
+  const icon = document.createElement('div')
+  icon.innerHTML = `<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="4" width="40" height="32" rx="3" stroke="#c0c4cc" stroke-width="1.5" fill="none"/>
+    <rect x="10" y="26" width="8" height="10" rx="0.5" fill="#e0e2e6"/>
+    <rect x="20" y="20" width="8" height="16" rx="0.5" fill="#e0e2e6"/>
+    <rect x="30" y="14" width="8" height="22" rx="0.5" fill="#e0e2e6"/>
+  </svg>`
+  icon.style.cssText = 'opacity:0.6;'
+  wrapper.appendChild(icon)
 
   const msg = document.createElement('div')
   msg.style.cssText = 'max-width:400px;line-height:1.6;'
@@ -400,7 +411,12 @@ onUnmounted(() => {
 
 <template>
   <div v-if="renderError" class="chart-error-boundary">
-    <div class="chart-error-icon">⚠️</div>
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" class="chart-error-icon">
+      <rect x="4" y="4" width="40" height="32" rx="3" stroke="#c0c4cc" stroke-width="1.5" fill="none"/>
+      <rect x="10" y="26" width="8" height="10" rx="0.5" fill="#e0e2e6"/>
+      <rect x="20" y="20" width="8" height="16" rx="0.5" fill="#e0e2e6"/>
+      <rect x="30" y="14" width="8" height="22" rx="0.5" fill="#e0e2e6"/>
+    </svg>
     <div class="chart-error-msg">{{ renderError }}</div>
     <div class="chart-error-hint">请尝试切换到其他图表类型或刷新页面</div>
   </div>
@@ -425,7 +441,7 @@ onUnmounted(() => {
   font-size: 14px;
   text-align: center;
   padding: 24px;
-  .chart-error-icon { font-size: 32px; }
+  .chart-error-icon { opacity: 0.6; }
   .chart-error-msg { max-width: 400px; line-height: 1.6; }
   .chart-error-hint { font-size: 13px; color: #b0b3b8; }
 }

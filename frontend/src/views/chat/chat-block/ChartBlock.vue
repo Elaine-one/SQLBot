@@ -420,8 +420,8 @@ function setChartType(val: ChartTypes, fromAutoCorrection = false) {
     console.log(`[ChartBlock] canRenderChartType(${val}):`, compatibility)
     if (compatibility && !compatibility.ok) {
       console.warn(`[ChartBlock] 类型 ${val} 可能不适合当前数据：${compatibility.reason}`)
-      ElMessage.warning(`当前数据可能不适合「${val}」图表：${compatibility.reason}`)
-      // 不 return！允许切换，让渲染层做兜底处理
+      // 不弹 toast：嵌入 DataEase 时 ElMessage 样式突兀。
+      // 渲染层 _showFallbackHint 已提供足够的兜底提示。
     }
   }
 

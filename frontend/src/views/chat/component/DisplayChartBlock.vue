@@ -302,7 +302,15 @@ onUnmounted(() => {
       :multi-quota-name="multiQuotaName"
       :show-label="showLabel"
     />
-    <el-empty v-else :description="loadingData ? t('chat.loading_data') : t('chat.no_data')" />
+    <div v-else class="chart-empty-state">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="4" width="40" height="32" rx="3" stroke="#c0c4cc" stroke-width="1.5" fill="none"/>
+        <rect x="10" y="26" width="8" height="10" rx="0.5" fill="#e0e2e6"/>
+        <rect x="20" y="20" width="8" height="16" rx="0.5" fill="#e0e2e6"/>
+        <rect x="30" y="14" width="8" height="22" rx="0.5" fill="#e0e2e6"/>
+      </svg>
+      <div class="chart-empty-text">{{ loadingData ? t('chat.loading_data') : t('chat.no_data') }}</div>
+    </div>
   </div>
 </template>
 
@@ -312,5 +320,16 @@ onUnmounted(() => {
   width: 100%;
   border-radius: 12px;
   background: rgba(224, 224, 226, 0.29);
+}
+.chart-empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #8f959e;
+  font-size: 14px;
+  .chart-empty-text { opacity: 0.7; }
 }
 </style>
