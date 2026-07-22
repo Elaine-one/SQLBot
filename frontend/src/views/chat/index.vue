@@ -242,8 +242,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message">
                         <div class="tool-btns">
@@ -337,8 +338,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message" />
                     </template>
@@ -364,8 +366,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message" />
                     </template>
@@ -933,8 +936,8 @@ async function clickAnalysis(id?: number) {
   currentRecord.create_time = new Date()
   currentRecord.chat_id = baseRecord.chat_id
   currentRecord.question = baseRecord.question
-  currentRecord.chart = baseRecord.chart
   currentRecord.data = baseRecord.data
+  // chart is NOT copied — agent auto-generates its own via _generate_chart()
   currentRecord.analysis_record_id = id
   currentRecord.analysis = ''
 
@@ -1011,8 +1014,8 @@ async function clickPredict(id?: number) {
   currentRecord.create_time = new Date()
   currentRecord.chat_id = baseRecord.chat_id
   currentRecord.question = baseRecord.question
-  currentRecord.chart = baseRecord.chart
   currentRecord.data = baseRecord.data
+  // chart is NOT copied — agent auto-generates its own via _generate_chart()
   currentRecord.predict_record_id = id
   currentRecord.predict = ''
   currentRecord.predict_data = ''

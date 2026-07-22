@@ -2,6 +2,16 @@
 import ChartComponent from '@/views/chat/component/ChartComponent.vue'
 import icon_window_mini_outlined from '@/assets/svg/icon_window-mini_outlined.svg'
 import SqViewDisplay from '@/views/dashboard/components/sq-view/index.vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import ChartPopover from '@/views/chat/chat-block/ChartPopover.vue'
+import {
+  useChartTypeConfig,
+  getChartTypeList,
+} from '@/views/chat/component/useChartTypeConfig.ts'
+import type { ChartTypes } from '@/views/chat/component/BaseChart.ts'
+import ICON_TABLE from '@/assets/svg/chart/icon_form_outlined.svg'
+
 const props = defineProps({
   viewInfo: {
     type: Object,
@@ -19,15 +29,6 @@ const props = defineProps({
   },
 })
 
-import { computed, nextTick, onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import ChartPopover from '@/views/chat/chat-block/ChartPopover.vue'
-import ICON_TABLE from '@/assets/svg/chart/icon_form_outlined.svg'
-import ICON_COLUMN from '@/assets/svg/chart/icon_dashboard_outlined.svg'
-import ICON_BAR from '@/assets/svg/chart/icon_bar_outlined.svg'
-import ICON_LINE from '@/assets/svg/chart/icon_chart-line.svg'
-import ICON_PIE from '@/assets/svg/chart/icon_pie_outlined.svg'
-import type { ChartTypes } from '@/views/chat/component/BaseChart.ts'
 const { t } = useI18n()
 const chartRef = ref(null)
 const currentChartType = ref<ChartTypes | undefined>(undefined)
@@ -45,42 +46,16 @@ const enlargeView = () => {
   enlargeDialogVisible.value = true
 }
 
-const chartTypeList = computed(() => {
-  const _list = []
-  if (props.viewInfo.chart) {
-    switch (props.viewInfo.chart['sourceType']) {
-      case 'table':
-        break
-      case 'column':
-      case 'bar':
-      case 'line':
-        _list.push({
-          value: 'column',
-          name: t('chat.chart_type.column'),
-          icon: ICON_COLUMN,
-        })
-        _list.push({
-          value: 'bar',
-          name: t('chat.chart_type.bar'),
-          icon: ICON_BAR,
-        })
-        _list.push({
-          value: 'line',
-          name: t('chat.chart_type.line'),
-          icon: ICON_LINE,
-        })
-        break
-      case 'pie':
-        _list.push({
-          value: 'pie',
-          name: t('chat.chart_type.pie'),
-          icon: ICON_PIE,
-        })
-    }
-  }
+const { config } = useChartTypeConfig()
 
-  return _list
+// sourceType: AI 原始选择的图表类型，用于确定可切换范围
+// 优先使用已保存的 sourceType，否则用 chart.type 兜底
+const sourceType = computed(() => {
+  return props.viewInfo.chart?.['sourceType'] || props.viewInfo.chart?.type || 'table'
 })
+
+// → 从 composable 计算类型切换列表（以 sourceType 为基线，含自身 + compatibleWith）
+const chartTypeList = getChartTypeList(config, sourceType)
 
 function changeTable() {
   onTypeChange('table')
@@ -91,7 +66,7 @@ const chartType = computed<ChartTypes>({
     if (currentChartType.value) {
       return currentChartType.value
     }
-    return props.viewInfo.chart['sourceType'] ?? 'table'
+    return props.viewInfo.chart?.['sourceType'] || props.viewInfo.chart?.type || 'table'
   },
   set(v) {
     currentChartType.value = v
@@ -111,9 +86,11 @@ function onTypeChange(val: any) {
 }
 
 onMounted(() => {
-  // eslint-disable-next-line vue/no-mutating-props
-  props.viewInfo.chart['sourceType'] =
-    props.viewInfo.chart['sourceType'] ?? props.viewInfo.chart.type
+  // 确保 sourceType 已保存——首次挂载时从 chart.type 初始化
+  if (!props.viewInfo.chart['sourceType']) {
+    // eslint-disable-next-line vue/no-mutating-props
+    props.viewInfo.chart['sourceType'] = props.viewInfo.chart.type || 'table'
+  }
 })
 
 defineExpose({
@@ -170,6 +147,7 @@ defineExpose({
         :series="viewInfo.chart?.series"
         :data="viewInfo.data?.data"
         :multi-quota-name="viewInfo.chart?.multiQuotaName"
+        :settings="viewInfo.chart?.settings || {}"
       />
     </div>
     <el-dialog

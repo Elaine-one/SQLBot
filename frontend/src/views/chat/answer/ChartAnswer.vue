@@ -195,12 +195,10 @@ const sendMessage = async () => {
               emits('error', currentRecord.id)
               break
             case 'text-delta':
-              // Agent reasoning text — accumulate and display as thinking process
               sql_answer += (data.content || '')
               _currentChat.value.records[index.value].sql_answer = sql_answer
               break
             case 'tool-call':
-              // Agent is about to call a tool — track for progress display
               currentRecord.tool_calls_log.push({
                 tool: data.tool_name,
                 args: data.args,
@@ -245,6 +243,12 @@ const sendMessage = async () => {
                 sql_answer += '❓ ' + data.content
                 _currentChat.value.records[index.value].sql_answer = sql_answer
               }
+              break
+            case 'execution-stats':
+              // Agent execution log: token usage, tool timing, iterations
+              try {
+                _currentChat.value.records[index.value].execution_log = JSON.parse(data.content)
+              } catch (e) { /* ignore parse errors */ }
               break
             case 'finish':
               console.log('[SSE] finish event, isTyping will be set to false')

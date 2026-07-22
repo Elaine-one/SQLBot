@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { type ChatMessage } from '@/api/chat.ts'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
 import icon_up_outlined from '@/assets/svg/icon_up_outlined.svg'
 import icon_down_outlined from '@/assets/svg/icon_down_outlined.svg'
 import { useI18n } from 'vue-i18n'
-import { useChatConfigStore } from '@/stores/chatConfig.ts'
 
 const props = withDefaults(
   defineProps<{
@@ -25,40 +24,36 @@ const props = withDefaults(
 
 const { t } = useI18n()
 
-const chatConfig = useChatConfigStore()
-
 const show = ref<boolean>(false)
 
-const reasoningContent = computed<Array<string>>(() => {
-  const names: Array<'sql_answer' | 'chart_answer' | 'analysis_thinking' | 'predict'> = []
-  if (typeof props.reasoningName === 'string') {
-    names.push(props.reasoningName)
-  } else {
-    props.reasoningName.forEach((item) => {
-      names.push(item)
-    })
+// ❓ 是可靠边界（后端 clarify 事件保证），之前=思考，之后=回复
+function splitByClarify(sql: string): { thinking: string; reply: string } {
+  const idx = sql.indexOf('❓')
+  if (idx >= 0) {
+    return { thinking: sql.slice(0, idx).trim(), reply: sql.slice(idx).trim() }
   }
+  return { thinking: sql, reply: '' }
+}
+
+const clarifyParts = computed(() => {
+  const sql = props.message?.record?.sql_answer || ''
+  return splitByClarify(sql)
+})
+
+// 思考区 = ❓ 之前的 LLM 输出 + chart_answer
+const reasoningContent = computed<Array<string>>(() => {
   const result: Array<string> = []
-  names.forEach((item) => {
-    if (props.message?.record) {
-      if (props.message?.record[item]) {
-        result.push(props.message?.record[item] ?? '')
-      }
-    }
-  })
+  const thinkPart = clarifyParts.value.thinking
+  if (thinkPart) result.push(thinkPart)
+  const chart = props.message?.record?.chart_answer
+  if (chart && chart.trim()) result.push(chart)
   return result
 })
 
-const hasReasoning = computed<boolean>(() => {
-  if (reasoningContent.value.length > 0) {
-    for (let i = 0; i < reasoningContent.value.length; i++) {
-      if (reasoningContent.value[i] && reasoningContent.value[i].trim() !== '') {
-        return true
-      }
-    }
-  }
-  return false
-})
+const hasThinking = computed<boolean>(() => reasoningContent.value.length > 0)
+
+// 回复文本 = ❓ 之后的内容（AI 询问/回复用户的信息）
+const replyText = computed<string>(() => clarifyParts.value.reply)
 
 function clickShow() {
   show.value = !show.value
@@ -66,19 +61,25 @@ function clickShow() {
 
 onMounted(() => {
   if (props.message.isTyping) {
-    show.value = chatConfig.getExpandThinkingBlock
+    show.value = true
   }
 })
 
-const toolCallsLog = computed(() => {
-  return props.message?.record?.tool_calls_log || []
+// isTyping 变化时：开始→展开，结束→折叠
+watch(() => props.message.isTyping, (typing) => {
+  if (typing) {
+    show.value = true
+  } else if (hasThinking.value) {
+    show.value = false
+  }
 })
 </script>
 
 <template>
   <div class="base-answer-block">
+    <!-- 思考过程：生成中默认展开，完成后可折叠 -->
     <el-button
-      v-if="message.isTyping || hasReasoning || toolCallsLog.length > 0"
+      v-if="message.isTyping || hasThinking"
       class="thinking-btn"
       @click="clickShow"
     >
@@ -91,24 +92,16 @@ const toolCallsLog = computed(() => {
         </span>
       </div>
     </el-button>
-    <div v-if="show && (hasReasoning || toolCallsLog.length > 0)" class="reasoning-content">
-      <div v-if="toolCallsLog.length > 0" class="tool-progress">
-        <div v-for="(tc, _idx) in toolCallsLog" :key="'tc-' + _idx" class="tool-line">
-          <span class="tool-name">{{ tc.tool }}</span>
-          <span v-if="tc.result" class="tool-result">→ {{ tc.result }}</span>
-          <span v-else class="tool-pending">...</span>
-        </div>
-      </div>
+    <div v-if="show && hasThinking" class="reasoning-content">
       <div v-for="(reason, _index) in reasoningContent" :key="'rc-' + _index" class="reasoning">
         <MdComponent :message="reason" />
       </div>
     </div>
+
+    <!-- 回复：AI 回复文本（❓后）+ 图表/表格 -->
     <div class="answer-container">
-      <div
-        v-if="message?.record?.sql_answer && message.record.sql_answer.trim()"
-        class="answer-text"
-      >
-        <MdComponent :message="message.record.sql_answer" />
+      <div v-if="replyText" class="answer-text">
+        <MdComponent :message="replyText" />
       </div>
       <slot></slot>
       <el-button v-if="message.isTyping" style="min-width: unset" type="primary" link loading />
@@ -140,7 +133,6 @@ const toolCallsLog = computed(() => {
       display: flex;
       flex-direction: row;
       align-items: center;
-
       line-height: 22px;
       font-weight: 400;
       font-size: 14px;
@@ -157,28 +149,6 @@ const toolCallsLog = computed(() => {
     padding-left: 9px;
     border-left: 1px solid rgba(31, 35, 41, 0.15);
     gap: 8px;
-
-    .tool-progress {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-
-      .tool-line {
-        font-size: 13px;
-        line-height: 20px;
-        color: rgba(100, 106, 115, 1);
-        .tool-name {
-          font-weight: 500;
-          color: rgba(31, 35, 41, 0.8);
-        }
-        .tool-result {
-          color: rgba(28, 186, 144, 1);
-        }
-        .tool-pending {
-          color: rgba(143, 149, 158, 1);
-        }
-      }
-    }
 
     .reasoning {
       width: 100%;
@@ -206,7 +176,6 @@ const toolCallsLog = computed(() => {
 
   .answer-container {
     width: 100%;
-
     line-height: 24px;
     font-size: 16px;
     font-weight: 400;

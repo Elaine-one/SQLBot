@@ -53,7 +53,7 @@ function showTraceBack() {
         {{ t('chat.ds_is_invalid') }}
       </template>
       <template v-else-if="errorMessage.type === 'exec-sql-err'">
-        {{ t('chat.exec-sql-err') }}
+        {{ errorMessage.message || t('chat.exec-sql-err') }}
       </template>
       <template v-else>
         {{ t('chat.error') }}
