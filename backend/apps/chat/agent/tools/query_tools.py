@@ -94,7 +94,12 @@ async def execute_sql_query(
 
     After execution, results are stored in QueryRecord.data
     and accessible for chart generation.
+
+    A safety row limit is applied if the SQL has no LIMIT clause,
+    preventing accidental full-table scans from overwhelming memory.
     """
+    import re
+
     query = memory.queries.get(record_id)
     if not query:
         return {
@@ -113,6 +118,26 @@ async def execute_sql_query(
             executable = compiler.compile(query.sql)
 
         from common.utils.utils import SQLBotLogUtil
+
+        # ── Safety row limit ──────────────────────────────────
+        # If the SQL has no LIMIT clause, wrap it to prevent OOM.
+        # The system prompt tells the LLM to use LIMIT 1000 for detail
+        # queries, but this is a belt-and-suspenders guard for when
+        # the LLM forgets.  Aggregation queries (GROUP BY without LIMIT)
+        # also get the safety limit applied — GROUP BY on high-cardinality
+        # columns can still produce millions of rows.
+        _SAFETY_LIMIT = 500
+        has_limit = re.search(
+            r'\bLIMIT\s+\d+', executable, re.IGNORECASE
+        ) is not None
+        if not has_limit:
+            executable = (
+                f"SELECT * FROM ({executable}) AS _sqlbot_safety LIMIT {_SAFETY_LIMIT}"
+            )
+            SQLBotLogUtil.info(
+                f"[Agent] safety limit {_SAFETY_LIMIT} applied to {record_id}"
+            )
+
         SQLBotLogUtil.info(
             f"[Agent] compiled_sql={'Y' if query.compiled_sql else 'N'} "
             f"sql_preview={executable[:200]}..."
@@ -130,8 +155,9 @@ async def execute_sql_query(
         return {
             "success": True,
             "record_id": record_id,
-            "row_count": len(result.get("data", [])),
+            "row_count": query.row_count,
             "columns": result.get("fields", []),
+            "safety_limit_applied": not has_limit,
         }
     except Exception as exc:
         query.status = "failed"

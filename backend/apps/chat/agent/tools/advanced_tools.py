@@ -8,6 +8,7 @@ load_skill              — load SQL dialect knowledge on demand.
 get_data_summary        — statistical summary of data fields (mem, no I/O).
 get_data_preview        — paginated data rows (mem, no I/O).
 search_web              — async web search for external info (predict only).
+preview_sql             — execute a read-only SQL for internal exploration (non-terminal).
 """
 
 from __future__ import annotations
@@ -18,6 +19,88 @@ import time
 import asyncio
 
 from apps.chat.agent.memory import AgentMemory
+
+
+# ── preview_sql ─────────────────────────────────────────────
+
+async def preview_sql(
+    sql: str,
+    memory: AgentMemory = None,
+    max_rows: int = 20,
+) -> dict:
+    """Execute a read-only SQL query for internal agent exploration.
+
+    NON-TERMINAL — the agent continues exploring after calling this.
+    Results are returned to the agent ONLY; nothing is shown to the user.
+
+    Use this when you need to verify a hypothesis about the data,
+    check value distributions, or preview what a query would return —
+    BEFORE committing to a final user-facing create_sql_query.
+
+    DO NOT use this for the final answer — use create_sql_query for that.
+    """
+    from apps.chat.agent.tools.sql_tools import (
+        _validate_sql_syntax, _extract_table_names,
+    )
+    from apps.chat.agent.compiler import DatasetSQLCompiler
+
+    original_sql = sql
+    ds_type = memory.datasource_type or ""
+
+    # 1. Compile DataEase dataset references
+    compiler = DatasetSQLCompiler(memory)
+    try:
+        compiled = compiler.compile(sql)
+    except Exception as exc:
+        return {"success": False, "error": f"SQL 编译失败: {exc}"}
+
+    # 2. Syntax check
+    valid, error = _validate_sql_syntax(compiled, ds_type)
+    if not valid:
+        return {"success": False, "error": error}
+
+    # 3. Read-only check
+    from apps.db.db import check_sql_read
+    try:
+        is_safe, reason = check_sql_read(compiled, memory.ds)
+        if not is_safe:
+            return {"success": False, "error": reason}
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+
+    # 4. Table-existence check
+    used = _extract_table_names(original_sql)
+    unknown = [
+        t for t in used
+        if t not in memory.explored_tables and not compiler.is_dataset(t)
+    ]
+    if unknown:
+        return {
+            "success": False,
+            "error": f"表 {unknown} 的字段结构尚未获取。请先调用 get_table_metadata",
+        }
+
+    # 5. Execute with row limit
+    from apps.db.db import exec_sql
+    try:
+        result = exec_sql(ds=memory.ds, sql=compiled)
+        rows = result.get("data", [])
+        fields = result.get("fields", [])
+        total = len(rows)
+
+        # Truncate to max_rows to protect context window
+        truncated = rows[:max_rows] if total > max_rows else rows
+
+        return {
+            "success": True,
+            "row_count": total,
+            "returned": len(truncated),
+            "truncated": total > max_rows,
+            "columns": fields,
+            "rows": truncated,
+        }
+    except Exception as exc:
+        return {"success": False, "error": f"SQL 执行失败: {exc}"}
 
 
 # ── replace_sql_fragment ──────────────────────────────────

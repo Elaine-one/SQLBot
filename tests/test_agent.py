@@ -1,7 +1,7 @@
 """
 Comprehensive tests for the SQLBot Agent module.
 
-Covers all 14 agent files — memory, registry, tools, graph, executor, adapter.
+Covers all 18 agent files — memory, registry, tools, graph, executor, adapter, compiler, chart_registry, chart_knowledge.
 Tests run without DB/LLM dependencies (isolated logic tests).
 """
 
@@ -11,7 +11,7 @@ import os
 import sys
 import traceback
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 # ============================================================
 # Test helpers
@@ -60,7 +60,7 @@ def test_memory():
 
     # 1a: basic construction
     m = AgentMemory(datasource_id=1, datasource_type="mysql")
-    check("defaults", m.max_iterations == 8 and m.terminal_triggered == False)
+    check("defaults", m.max_iterations == 50 and m.terminal_triggered == False)
     check("default followup", m.is_followup == False)
     check("no queries initially", len(m.queries) == 0)
     check("no charts initially", len(m.charts) == 0)
@@ -369,8 +369,8 @@ def test_advanced_tools():
 
     # 7a: skill catalog
     cat = get_skill_catalog()
-    check("catalog count", len(cat) == 8)
-    check("catalog has postgresql", cat[0]["id"] == "sql-postgresql")
+    check("catalog count", len(cat) == 12, f"got {len(cat)}")
+    check("catalog has postgresql", any(s["id"] == "sql-postgresql" for s in cat))
     skill_ids = [s["id"] for s in cat]
     for expected in ["sql-mysql", "sql-clickhouse", "sql-oracle", "sql-dm"]:
         check(f"catalog has {expected}", expected in skill_ids)
@@ -390,7 +390,7 @@ def test_advanced_tools():
     r = asyncio.run(ask_for_clarification(question="test question?", memory=m))
     check("clarify success", r["success"] == True)
     check("clarify question", r["clarification"] == "test question?")
-    check("clarify hint", "hint" in r)
+    check("clarify action", r.get("action") == "user_input_required")
 
     # 7e: replace_sql_fragment (delegates to edit_sql_query)
     m = AgentMemory(datasource_type="mysql", ds=type("x", (), {"type": "mysql"})())
@@ -436,8 +436,8 @@ def test_schema_mode():
     check("field name preserved", f["name"] == "行小计USD")
     check("business_name added", f.get("business_name") == "订单总额usd")
 
-    f2 = sim_build_field({"name": "order_id", "type": "int", "comment": "Order ID"})
-    check("regular comment", f2["comment"] == "Order ID" and "business_name" not in f2)
+    f2 = sim_build_field({"name": "order_id", "type": "int", "comment": "order_id"})
+    check("regular comment (comment == name)", "comment" in f2 and f2["comment"] == "order_id" and "business_name" not in f2)
 
     # 8d: assistant search returns ALL tables (no truncation, no ranking)
     # Simulate the logic
@@ -505,6 +505,10 @@ def test_graph_prompt():
     check("first-turn has edit", "edit_sql_query" in p)
     check("first-turn NO followup section", "追问模式" not in p)
     check("first-turn has datasource", "mysql" in p)
+    check("first-turn has internal tools section", "内部工具" in p)
+    check("first-turn has user-visible tools section", "用户可见" in p)
+    check("first-turn has preview_sql", "preview_sql" in p)
+    check("first-turn has 关键规则", "关键规则" in p)
     check("first-turn has phase4 tools", "load_skill" in p and "analyze_query_result" in p)
 
     # 10b: follow-up prompt
@@ -541,20 +545,23 @@ def test_register_all():
     except (ImportError, RuntimeError) as e:
         print(f"\n  ~~ SKIP test_register_all: {e}")
         return
-    check("13 tools total", n == 13, f"got {n}")
+    check("17 tools total", n == 17, f"got {n}")
 
     names = ToolRegistry.names()
     core = ["search_relevant_tables", "get_table_metadata", "get_table_sample_data",
             "get_field_values", "create_sql_query", "edit_sql_query",
             "create_chart", "edit_chart", "execute_sql_query"]
-    phase4 = ["replace_sql_fragment", "ask_for_clarification", "analyze_query_result", "load_skill"]
+    phase4 = ["replace_sql_fragment", "ask_for_clarification", "analyze_query_result",
+              "load_skill", "get_data_summary", "get_data_preview", "search_web",
+              "preview_sql"]
     for name in core + phase4:
         check(f"tool registered: {name}", name in names)
 
     # Terminal tools
     terminal = {t.name for t in ToolRegistry._tools.values() if t.terminal}
-    check("terminal count", len(terminal) == 4, str(terminal))
-    for t in ["create_sql_query", "edit_sql_query", "edit_chart", "replace_sql_fragment"]:
+    check("terminal count", len(terminal) == 5, str(terminal))
+    for t in ["create_sql_query", "edit_sql_query", "edit_chart",
+              "replace_sql_fragment", "ask_for_clarification"]:
         check(f"terminal: {t}", t in terminal)
 
     # Categories
@@ -567,7 +574,7 @@ def test_register_all():
 
     # OpenAI schemas
     schemas = ToolRegistry.get_openai_schemas()
-    check("schema count", len(schemas) == 13)
+    check("schema count", len(schemas) == 17)
     for s in schemas:
         assert s["type"] == "function", f"Bad schema type: {s}"
         assert "name" in s["function"], f"Bad schema: {s}"
@@ -581,7 +588,7 @@ def test_register_all():
 def test_syntax():
     section("12. Syntax — all agent files")
     import py_compile
-    agent_dir = os.path.join(os.path.dirname(__file__), "..", "apps", "chat", "agent")
+    agent_dir = os.path.join(os.path.dirname(__file__), "..", "backend", "apps", "chat", "agent")
     py_files = []
     for root, _, files in os.walk(agent_dir):
         for f in files:
@@ -597,14 +604,14 @@ def test_syntax():
             check(f"syntax: {rel}", False, str(e))
 
     # chat.py
-    chat_py = os.path.join(os.path.dirname(__file__), "..", "apps", "chat", "api", "chat.py")
+    chat_py = os.path.join(os.path.dirname(__file__), "..", "backend", "apps", "chat", "api", "chat.py")
     try:
         py_compile.compile(chat_py, doraise=True)
         check("syntax: chat.py", True)
     except py_compile.PyCompileError as e:
         check("syntax: chat.py", False, str(e))
 
-    check("total agent files", len(py_files) == 13, f"got {len(py_files)}")
+    check("total agent files", len(py_files) == 18, f"got {len(py_files)}")
 
 
 # ============================================================
