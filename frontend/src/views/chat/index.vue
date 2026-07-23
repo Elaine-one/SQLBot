@@ -120,7 +120,7 @@
                   ><custom_small v-if="appearanceStore.themeColor !== 'default'"></custom_small>
                   <LOGO_fold v-else></LOGO_fold
                 ></el-icon>
-                {{ appearanceStore.pc_welcome ?? '你好，我是 SQLBot' }}
+                {{ appearanceStore.pc_welcome ?? `你好，我是 ${chatConfig.getSQLBotName}` }}
               </div>
               <div class="sub">
                 {{

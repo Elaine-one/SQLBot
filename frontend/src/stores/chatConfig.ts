@@ -15,7 +15,7 @@ export const chatConfigStore = defineStore('chatConfigStore', {
   state: (): ChatConfig => {
     return {
       sqlbot_name: 'SQLBot',
-      expand_thinking_block: false,
+      expand_thinking_block: true,
       limit_rows: true,
       show_sql: true,
       show_log: true,
