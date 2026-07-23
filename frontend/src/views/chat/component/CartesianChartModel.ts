@@ -180,10 +180,10 @@ export function buildCartesianModel(
   const yReq = requirements.find((r) => r.role === 'y')!
   const colorReq = requirements.find((r) => r.role === 'color')!
 
-  // 检查 x 是否合法（column/bar 禁止 temporal）
+  // 检查 x 是否合法
   const xChannel = columnMetas.find((m) => m.value === xAxes[0].value)
+  // 检查1：x 在 forbiddenTypes 中
   if (xChannel && xReq.forbiddenTypes.includes(xChannel.channel)) {
-    // 尝试找可替代的非 forbidden 维度列
     const alt = columnMetas.find(
       (m) =>
         m.value !== yAxes[0].value &&
@@ -191,6 +191,20 @@ export function buildCartesianModel(
         !xReq.forbiddenTypes.includes(m.channel)
     )
     if (alt) xAxes = [{ name: alt.name, value: alt.value, type: 'x' }]
+  }
+  // 检查2：x 必须是 dimension（dimensionOnly=true 时），否则与 y 交换
+  if (xChannel && xReq.dimensionOnly && !isDimensionType(xChannel.channel)) {
+    const yChannel = columnMetas.find((m) => m.value === yAxes[0].value)
+    // 如果 y 是 dimension 而 x 是 metric，交换 x↔y
+    if (yChannel && isDimensionType(yChannel.channel)) {
+      console.warn(
+        `[CartesianChartModel] x 通道 "${xAxes[0].value}" 是 ${xChannel.channel} 不是 dimension，` +
+        `与 y 通道 "${yAxes[0].value}"(${yChannel.channel}) 交换纠正`
+      )
+      const tmp = xAxes[0]
+      xAxes = [{ ...yAxes[0], type: 'x' }]
+      yAxes = [{ ...tmp, type: 'y' }]
+    }
   }
 
   // 检查 y 是否合法

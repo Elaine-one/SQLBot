@@ -157,25 +157,43 @@ const yAxis = computed(() => {
     const y = axis.y
     const multiQuotaValues = axis['multi-quota']?.value || []
     const yArray = Array.isArray(y) ? [...y] : [{ ...y }]
-    // pie 比率字段和负值字段：打印警告但不拒绝，让用户自行判断
-    if (props.chartType === 'pie' && yArray[0]) {
+    // pie 的 theta 通道必须是 metric，不能用 AI 给出的分类字段（如柱状图切饼图时 y=分类名）
+    if (props.chartType === 'pie' && yArray.length > 0) {
       const yName = yArray[0].name
-      if (/率|%|percent|ratio|占比|份额|百分比/i.test(yName)) {
-        console.warn(`[DisplayChartBlock] pie theta 字段 "${yName}" 是比率/百分比字段，饼图扇区大小≠该比率的占比，请注意`)
-      }
       const yValue = yArray[0].value
-      const hasNegative = (props.data || []).slice(0, 50).some(
-        (d) => Number(d[yValue]) < 0
-      )
-      if (hasNegative) {
-        console.warn(`[DisplayChartBlock] pie theta 字段 "${yName}" 含负值，饼图可能渲染异常`)
+      const channel = classifyColumn(props.data, yValue)
+      // theta 通道必须是 metric；分类/时间/序数字段不能作为饼图角度
+      if (channel !== 'metric') {
+        console.warn(
+          `[DisplayChartBlock] pie theta 字段 "${yName}" (value="${yValue}") 的通道类型是 "${channel}"，不是 metric。` +
+          `改用 recommendAxes 推荐的 metric 字段。`
+        )
+        // 不返回，继续走下面 recommendAxes 路径
+      } else {
+        if (/率|%|percent|ratio|占比|份额|百分比/i.test(yName)) {
+          console.warn(`[DisplayChartBlock] pie theta 字段 "${yName}" 是比率/百分比字段，饼图扇区大小≠该比率的占比，请注意`)
+        }
+        const hasNegative = (props.data || []).slice(0, 50).some(
+          (d) => Number(d[yValue]) < 0
+        )
+        if (hasNegative) {
+          console.warn(`[DisplayChartBlock] pie theta 字段 "${yName}" 含负值，饼图可能渲染异常`)
+        }
+        return yArray.map((item) => ({
+          ...item,
+          type: 'y',
+          'multi-quota': multiQuotaValues.includes(item.value),
+        }))
       }
     }
-    return yArray.map((item) => ({
-      ...item,
-      type: 'y',
-      'multi-quota': multiQuotaValues.includes(item.value),
-    }))
+    // 非 pie 类型：直接沿用 AI 给出的 y 轴
+    if (props.chartType !== 'pie') {
+      return yArray.map((item) => ({
+        ...item,
+        type: 'y',
+        'multi-quota': multiQuotaValues.includes(item.value),
+      }))
+    }
   }
   const value = recommendedAxes.value.y
   if (value) {
