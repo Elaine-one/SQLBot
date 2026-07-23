@@ -359,6 +359,7 @@ async def dispatch(
         init_agent_memory,
         _load_memory_from_db,
         _save_memory_to_db,
+        _load_prompt_context,
     )
     from apps.chat.agent.tools.register_all import register_all_tools
 
@@ -389,6 +390,10 @@ async def dispatch(
         memory.current_user = base_memory.current_user
         memory.ds = base_memory.ds
         memory.out_ds_instance = base_memory.out_ds_instance
+        memory.sqlbot_name = base_memory.sqlbot_name
+        memory.enable_sql_row_limit = base_memory.enable_sql_row_limit
+        memory.context_record_count = base_memory.context_record_count
+        memory.expand_thinking_block = base_memory.expand_thinking_block
     else:
         memory = base_memory
         memory.session = session
@@ -401,6 +406,16 @@ async def dispatch(
     memory.terminal_triggered = False
     memory.iteration = 0
     memory.sql_retry_count = 0
+
+    # Load prompt enrichment context
+    _load_prompt_context(
+        session, memory, question,
+        oid=getattr(llm_service.current_user, "oid", 1),
+        datasource_id=getattr(memory, "datasource_id", None),
+        advanced_app_id=getattr(
+            getattr(llm_service, "current_assistant", None), "id", None
+        ) if getattr(llm_service, "current_assistant", None) else None,
+    )
 
     # For analysis/predict: inject base_record data as a pre-executed query
     if base_record:

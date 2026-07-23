@@ -187,11 +187,12 @@ async def analyze_query_result(
 
     from apps.template.generate_analysis.generator import get_analysis_template
     system_tpl = get_analysis_template()
+    sqlbot_name = getattr(memory, "sqlbot_name", None) or "SQLBot"
     system_msg = system_tpl["system"].format(
         lang="zh-CN",
         terminologies="",
         custom_prompt="",
-        sqlbot_name="SQLBot",
+        sqlbot_name=sqlbot_name,
     )
     user_msg = system_tpl["user"].format(
         fields=str(fields),

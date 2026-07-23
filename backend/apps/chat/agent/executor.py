@@ -278,8 +278,11 @@ class AgentExecutor:
                                     reasoning = ak.get("reasoning_content", "") or ""
 
                             # Emit native reasoning (DeepSeek-R1 etc.)
+                            # Gate on expand_thinking_block: when False, suppress reasoning SSE
+                            _emit_reasoning = getattr(self.memory, "expand_thinking_block", True)
                             if reasoning and reasoning.strip():
-                                self._emit("reasoning", content=reasoning)
+                                if _emit_reasoning:
+                                    self._emit("reasoning", content=reasoning)
                                 self._reasoning_output += reasoning
 
                             # Split content by intent:
@@ -289,7 +292,8 @@ class AgentExecutor:
                             if isinstance(content, str) and content.strip():
                                 if has_tools:
                                     # Exploration narrative — goes to thinking panel
-                                    self._emit("reasoning", content=content)
+                                    if _emit_reasoning:
+                                        self._emit("reasoning", content=content)
                                     self._reasoning_output += content
                                 else:
                                     # Final answer — goes to reply area
@@ -396,15 +400,15 @@ class AgentExecutor:
             await self._execute_and_chart(latest)
             return
 
-        # Chart-only edit — only emit charts created in the CURRENT turn.
-        # Charts from previous turns were already emitted; re-emitting them
-        # would duplicate the chart in the frontend.
-        if self.memory.terminal_triggered and self.memory._charts_this_turn:
+        # Chart-only path — emit charts created/edited in the CURRENT turn.
+        # This covers: edit_chart (terminal), create_chart on existing query (non-terminal),
+        # and chart-only edits.  Charts from previous turns are NOT re-emitted.
+        if self.memory._charts_this_turn:
             latest_chart = self.memory.get_latest_chart_this_turn()
             if latest_chart:
                 query = self.memory.queries.get(latest_chart.record_id)
                 if query and query.status == "executed":
-                    _log.info(f"[Agent] chart-only edit (this turn): {latest_chart.chart_ref}")
+                    _log.info(f"[Agent] chart-only emit (this turn): {latest_chart.chart_ref}")
                     await self._emit_chart_from_memory(query, latest_chart)
                     self._emit("sql-data", content="execute-success")
                     return
@@ -760,6 +764,30 @@ class AgentExecutor:
 
         if record and session:
             try:
+                # AgentMemory.queries[].data is intentionally NOT persisted
+                # (see memory.py:190).  For chart-only follow-ups, find the
+                # most recent ChatRecord in this chat that actually has data,
+                # and copy it to the current record so the frontend can fetch it.
+                if not query.data:
+                    try:
+                        from apps.chat.models.chat_model import ChatRecord as CR
+                        from sqlalchemy import select as sa_select, desc, and_
+                        chat_id = getattr(self.memory, "chat_id", None)
+                        if chat_id:
+                            db_rec = session.exec(
+                                sa_select(CR.data).where(
+                                    and_(CR.chat_id == chat_id, CR.data.isnot(None))
+                                ).order_by(desc(CR.create_time)).limit(1)
+                            ).first()
+                            if db_rec and db_rec[0]:
+                                import orjson as _ojson2
+                                raw = _ojson2.loads(db_rec[0]) if isinstance(db_rec[0], str) else db_rec[0]
+                                query.data = raw
+                                _log.info(f"[Agent:{self.profile.name}] copied data from earlier "
+                                          f"record in chat {chat_id}")
+                    except Exception as _fe:
+                        _log.info(f"[Agent:{self.profile.name}] data copy skipped: {_fe}")
+
                 has_data = bool(query.data)
                 _log.info(f"[Agent:{self.profile.name}] chart save starting "
                           f"record_id={record.id} "
@@ -1143,7 +1171,8 @@ class AgentExecutor:
             return
 
         tpl = get_chart_template()
-        system_msg = tpl["system"].format(lang="zh-CN", sqlbot_name="SQLBot")
+        sqlbot_name = getattr(self.memory, "sqlbot_name", None) or "SQLBot"
+        system_msg = tpl["system"].format(lang="zh-CN", sqlbot_name=sqlbot_name)
         rules_msg = tpl["generate_rules"].format(lang="zh-CN")
 
         from apps.chat.agent.chart_registry import (
@@ -1296,6 +1325,44 @@ class AgentExecutor:
         )
         self.memory.mark_chart_this_turn(chart_ref)
         _log.info(f"[Agent] chart saved to memory: {chart_ref}")
+
+        # ── Render chart picture (MCP) ──
+        await self._render_chart_picture(chart, query, chart_ref)
+
+    async def _render_chart_picture(self, chart: dict, query, chart_ref: str) -> None:
+        """Render chart as PNG via MCP image host (best-effort, non-blocking).
+
+        Posts chart config + data to MCP_IMAGE_HOST for server-side rendering.
+        Failures are logged but never block chart delivery — the frontend
+        can always render charts from JSON.
+        """
+        import os
+        import httpx
+        import orjson as _orjson
+        from common.core.config import settings
+
+        image_host = settings.MCP_IMAGE_HOST
+        if not image_host:
+            return
+
+        try:
+            chart_data = query.data if query else None
+            if not chart_data:
+                return
+            payload = {
+                "chart": _orjson.dumps(chart).decode(),
+                "data": _orjson.dumps(chart_data, default=str).decode(),
+            }
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.post(f"{image_host}/api/chart/render", json=payload)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    image_url = result.get("url") or result.get("image_url")
+                    if image_url:
+                        self.memory.charts[chart_ref].image_url = image_url
+                        _log.info(f"[Agent] chart picture rendered: {image_url}")
+        except Exception as e:
+            _log.info(f"[Agent] chart picture render skipped: {e}")
 
     async def _execute_and_chart(self, query) -> None:
         """Execute a query (with permission filtering), save to DB, generate chart."""

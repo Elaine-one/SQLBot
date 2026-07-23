@@ -43,8 +43,10 @@ def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
 
     ds_type = memory.datasource_type or "unknown"
     context = memory.get_context_for_llm()
+    sqlbot_name = memory.sqlbot_name or "SQLBot"
+    limit_rows = memory.enable_sql_row_limit
 
-    base = f"""你是 SQLBot，一个数据分析助手。通过调用工具完成数据查询和可视化。
+    base = f"""你是 {sqlbot_name}，一个数据分析助手。通过调用工具完成数据查询和可视化。
 
 操作按以下优先级：
 
@@ -104,7 +106,7 @@ def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
 
 ## 查询规范
 
-- 明细数据必须加 LIMIT，默认 1000；聚合查询不需要
+{f"- 明细数据必须加 LIMIT，默认 1000；聚合查询不需要" if limit_rows else ""}
 - 用户说"全部""所有"时不加 LIMIT
 
 ## ⚠️ 关键规则
@@ -135,6 +137,18 @@ create_sql_query 会自动处理数据集到物理查询的转换。
 - 用 get_field_values / get_table_sample_data 确认字段值
 - 不要尝试修改或"优化"数据集的内部 SQL
 """
+
+    # ═══ Inject custom prompts (enterprise xpack) ═══
+    if memory.custom_prompts_text:
+        base += f"\n{memory.custom_prompts_text}\n"
+
+    # ═══ Inject terminology (pgvector semantic match) ═══
+    if memory.terminology_text:
+        base += f"\n## 业务术语定义\n{memory.terminology_text}\n"
+
+    # ═══ Inject training examples (pgvector semantic match) ═══
+    if memory.training_examples_text:
+        base += f"\n## SQL训练示例\n{memory.training_examples_text}\n"
 
     # ═══ Inject conversation history (from DB ChatRecords) ═══
     if memory.conversation_history:
@@ -171,16 +185,23 @@ create_sql_query 会自动处理数据集到物理查询的转换。
 你正在处理一条追问消息。上方列出了之前对话中产生的可引用对象。
 
 决策规则:
-1. 用户要求修改图表类型/样式（"用柱状图""换个饼图""加标题"）
-   → `edit_chart` ← 不改SQL，不复执行
-2. 用户要求修改数据范围/条件（"只看华东区""加上利润列"）
+1. 同类图表切换（柱状图↔条形图↔折线图）
+   → `edit_chart(chart_ref, {"type": "column/bar/line"})` ← 不改SQL
+2. 切换到饼图（"扇形图""饼图""占比""份额"）
+   → `create_chart` ← 饼图轴结构与笛卡尔图不同，必须重新生成
+      constraints: series=分类(≤10), y=正数值, 不支持负值/多指标/时间轴
+3. 切换到表格（"表格""明细""列表"）
+   → `create_chart` ← 表格用 columns 结构，不同于 axis 结构
+4. 仅改样式（"加标题""换颜色""环形"）
+   → `edit_chart` ← 只改 settings/extra
+5. 用户要求修改数据范围/条件（"只看华东区""加上利润列"）
    → `edit_sql_query` ← 字符串替换，系统会自动重新执行
-3. 用户要求换个统计维度（"改成按月份""按客户分组"）
+6. 用户要求换个统计维度（"改成按月份""按客户分组"）
    → 检查已有查询是否覆盖该维度
    → 覆盖 → `edit_sql_query`
    → 不覆盖 → `create_sql_query`
-4. 用户提出全新话题 → `create_sql_query`
-5. 你创建的每个图表都会保存为新记录，历史图表不会丢失
+7. 用户提出全新话题 → `create_sql_query`
+8. 你创建的每个图表都会保存为新记录，历史图表不会丢失
    → 不需要担心覆盖问题，只需专注于生成当前轮的最佳结果
 """
 

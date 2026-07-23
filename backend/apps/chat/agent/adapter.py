@@ -46,8 +46,73 @@ def init_agent_memory(llm_service) -> AgentMemory:
         current_user=llm_service.current_user,
         ds=ds,
         out_ds_instance=getattr(llm_service, "out_ds_instance", None),
+        # ── workspace settings from LLMService ──────────
+        sqlbot_name=getattr(llm_service.chat_question, "sqlbot_name", "SQLBot"),
+        enable_sql_row_limit=getattr(llm_service, "enable_sql_row_limit", True),
+        context_record_count=getattr(llm_service, "base_message_round_count_limit", 5),
+        expand_thinking_block=getattr(llm_service, "expand_thinking_block", True),
     )
     return memory
+
+
+def _load_prompt_context(session, memory: AgentMemory,
+                        user_question: str, oid: int,
+                        datasource_id: int | None = None,
+                        advanced_app_id: int | None = None) -> None:
+    """Load terminology, training examples, and custom prompts for the agent.
+
+    This replaces the old pipeline's filter_terminology_template(),
+    filter_training_template(), and filter_custom_prompts() calls.
+
+    Results are stored in memory.{terminology_text, training_examples_text,
+    custom_prompts_text} and injected into the system prompt by graph.py.
+    """
+    # ── Terminology ──────────────────────────────────────────
+    if user_question.strip():
+        try:
+            from apps.terminology.curd.terminology import get_terminology_template
+            term_text, _ = get_terminology_template(
+                session, user_question, oid=oid, datasource=datasource_id
+            )
+            if term_text:
+                memory.terminology_text = term_text
+                _log.info(f"[Agent] loaded terminology for question")
+        except Exception as e:
+            _log.info(f"[Agent] failed to load terminology: {e}")
+
+    # ── Training examples ────────────────────────────────────
+    if user_question.strip():
+        try:
+            from apps.data_training.curd.data_training import get_training_template
+            train_text, _ = get_training_template(
+                session, user_question, oid=oid,
+                datasource=datasource_id,
+                advanced_application_id=advanced_app_id,
+            )
+            if train_text:
+                memory.training_examples_text = train_text
+                _log.info(f"[Agent] loaded training examples for question")
+        except Exception as e:
+            _log.info(f"[Agent] failed to load training examples: {e}")
+
+    # ── Custom prompts (xpack enterprise feature) ────────────
+    try:
+        from sqlbot_xpack.custom_prompt.curd.custom_prompt import find_custom_prompts
+        from sqlbot_xpack.custom_prompt.models.custom_prompt_model import CustomPromptTypeEnum
+        prompts = find_custom_prompts(
+            session, CustomPromptTypeEnum.GENERATE_SQL, oid, datasource_id
+        )
+        if prompts:
+            parts = ["## 自定义提示词"]
+            for p in prompts:
+                if hasattr(p, "content"):
+                    parts.append(p.content)
+            memory.custom_prompts_text = "\n".join(parts)
+            _log.info(f"[Agent] loaded {len(prompts)} custom prompts")
+    except ImportError:
+        pass  # xpack not installed
+    except Exception as e:
+        _log.info(f"[Agent] failed to load custom prompts: {e}")
 
 
 # ── memory persistence ────────────────────────────────────
@@ -97,7 +162,7 @@ def _save_memory_to_db(session, chat_id: int, memory: AgentMemory) -> None:
         _log.info(f"[Agent] failed to save memory: {e}")
 
 
-def _build_history_context(session, chat_id: int, max_turns: int = 5) -> str:
+def _build_history_context(session, chat_id: int, max_turns: int) -> str:
     """Build conversation history context from DB ChatRecords.
 
     Returns a compact summary of recent turns for injection into
@@ -216,6 +281,10 @@ async def stream_agent(
         memory.current_user = base_memory.current_user
         memory.ds = base_memory.ds
         memory.out_ds_instance = base_memory.out_ds_instance
+        memory.sqlbot_name = base_memory.sqlbot_name
+        memory.enable_sql_row_limit = base_memory.enable_sql_row_limit
+        memory.context_record_count = base_memory.context_record_count
+        memory.expand_thinking_block = base_memory.expand_thinking_block
     else:
         memory = base_memory
         memory.session = session
@@ -229,9 +298,20 @@ async def stream_agent(
     memory.iteration = 0
     memory.sql_retry_count = 0
 
-    # ═══ Step 4: Build conversation history context ═══
+    # ═══ Step 4: Load prompt enrichment context ═══
+    _load_prompt_context(
+        session, memory, question,
+        oid=getattr(llm_service.current_user, "oid", 1),
+        datasource_id=getattr(memory, "datasource_id", None),
+        advanced_app_id=getattr(
+            getattr(llm_service, "current_assistant", None), "id", None
+        ) if getattr(llm_service, "current_assistant", None) else None,
+    )
+
+    # ═══ Step 5: Build conversation history context ═══
     if is_followup and chat_id:
-        memory.conversation_history = _build_history_context(session, chat_id)
+        memory.conversation_history = _build_history_context(
+            session, chat_id, max_turns=memory.context_record_count)
 
     # ═══ Step 5: Emit record ID (frontend needs this) ═══
     if memory.record:
