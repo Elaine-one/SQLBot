@@ -486,8 +486,10 @@ export interface ColumnChannelMeta {
 export function classifyColumn(data: Array<ChartData>, field: string): ColumnChannel {
   if (!data || data.length === 0 || !field) return 'unknown'
   if (isTimeField(data, field)) return 'temporal'
-  if (isOrdinalField(data, field)) return 'ordinal'
 
+  // 先判断数值/分类（数据驱动），再判断序数名称（名称只是辅助信号）。
+  // 否则像 "order_count" 这种纯数值字段会被 ORDINAL_NAME_PATTERN 中的 /order/ 误判为序数，
+  // 导致 CartesianChartModel 把它当作合法的 x 维度，所有柱子挤在同一位置。
   const sample = data.slice(0, 20)
   const nonEmpty = sample.filter((d) => d[field] !== null && d[field] !== undefined && d[field] !== '')
   if (nonEmpty.length === 0) return 'categorical'
@@ -496,8 +498,14 @@ export function classifyColumn(data: Array<ChartData>, field: string): ColumnCha
     const s = String(d[field]).replace(/[,%]/g, '').trim()
     return s !== '' && !isNaN(Number(s))
   }).length
+  const isNumeric = numericCount / nonEmpty.length >= 0.8
 
-  return numericCount / nonEmpty.length >= 0.8 ? 'metric' : 'categorical'
+  if (isNumeric) return 'metric'
+
+  // 非数值字段才检查是否为序数维度（如 "排名"、"阶段" 等有业务顺序含义的文本/编码列）
+  if (isOrdinalField(data, field)) return 'ordinal'
+
+  return 'categorical'
 }
 
 export function isDimensionChannel(channel: ColumnChannel): boolean {

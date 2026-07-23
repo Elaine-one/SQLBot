@@ -103,6 +103,13 @@ class BaseChatOpenAI(ChatOpenAI):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        # 按场景注入 thinking mode：Q&A 不需要（工具调用多，content 为空），
+        # Analysis/Predict 需要（长文本推理）。由 executor 通过 enable_thinking 控制。
+        if getattr(self, "enable_thinking", False):
+            payload["extra_body"] = {
+                **payload.get("extra_body", {}),
+                "thinking": {"type": "enabled"},
+            }
         return payload
     usage_metadata: dict = {}
 

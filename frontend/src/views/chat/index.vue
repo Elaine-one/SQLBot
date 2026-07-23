@@ -232,7 +232,7 @@
                     :record-id="message.record?.id"
                     :loading="isTyping"
                     :message="message"
-                    :reasoning-name="['chart_answer']"
+                    :reasoning-name="['sql_answer']"
                     @scroll-bottom="scrollToBottom"
                     @finish="onChartAnswerFinish"
                     @error="onChartAnswerError"

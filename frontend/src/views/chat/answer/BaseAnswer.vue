@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type ChatMessage } from '@/api/chat.ts'
 import { computed, onMounted, ref, watch } from 'vue'
+import type { Reactive } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
 import icon_up_outlined from '@/assets/svg/icon_up_outlined.svg'
 import icon_down_outlined from '@/assets/svg/icon_down_outlined.svg'
@@ -16,6 +17,8 @@ const props = withDefaults(
       | 'analysis_thinking'
       | 'predict'
       | Array<'sql_answer' | 'chart_answer' | 'analysis_thinking' | 'predict'>
+    /** 流式写入的思考/追问字段。Vue class 实例响应式不可靠，改用独立 reactive 对象。 */
+    streamingState?: Record<string, any>
   }>(),
   {
     loading: false,
@@ -26,34 +29,46 @@ const { t } = useI18n()
 
 const show = ref<boolean>(false)
 
-// ❓ 是可靠边界（后端 clarify 事件保证），之前=思考，之后=回复
-function splitByClarify(sql: string): { thinking: string; reply: string } {
-  const idx = sql.indexOf('❓')
-  if (idx >= 0) {
-    return { thinking: sql.slice(0, idx).trim(), reply: sql.slice(idx).trim() }
-  }
-  return { thinking: sql, reply: '' }
-}
-
-const clarifyParts = computed(() => {
-  const sql = props.message?.record?.sql_answer || ''
-  return splitByClarify(sql)
+const rn = computed(() => {
+  const raw = props.reasoningName
+  return Array.isArray(raw) ? raw : [raw]
 })
 
-// 思考区 = ❓ 之前的 LLM 输出 + chart_answer
+/** 优先读 streamingState（流式），fallback 到 record 字段（DB 恢复） */
+function _read(field: string): string {
+  const ss = props.streamingState as Record<string, any> | undefined
+  if (ss && ss[field]) return String(ss[field])
+  return (props.message?.record as any)?.[field] || ''
+}
+
 const reasoningContent = computed<Array<string>>(() => {
   const result: Array<string> = []
-  const thinkPart = clarifyParts.value.thinking
-  if (thinkPart) result.push(thinkPart)
-  const chart = props.message?.record?.chart_answer
-  if (chart && chart.trim()) result.push(chart)
+  const rec = props.message?.record as any
+
+  if (rn.value.includes('sql_answer')) {
+    const r = _read('sql_reasoning_content')
+    if (r.trim()) result.push(r)
+  }
+  if (rn.value.includes('analysis_thinking')) {
+    const a = _read('analysis_thinking')
+    if (a.trim()) result.push(a)
+  }
+  if (rn.value.includes('predict')) {
+    const p = _read('predict')
+    if (p.trim()) result.push(p)
+  }
   return result
 })
 
 const hasThinking = computed<boolean>(() => reasoningContent.value.length > 0)
 
-// 回复文本 = ❓ 之后的内容（AI 询问/回复用户的信息）
-const replyText = computed<string>(() => clarifyParts.value.reply)
+const clarifyQuestion = computed<string>(() => {
+  return _read('clarify_question')
+})
+
+const replyText = computed<string>(() => {
+  return props.message?.record?.sql_answer || ''
+})
 
 function clickShow() {
   show.value = !show.value
@@ -65,7 +80,6 @@ onMounted(() => {
   }
 })
 
-// isTyping 变化时：开始→展开，结束→折叠
 watch(() => props.message.isTyping, (typing) => {
   if (typing) {
     show.value = true
@@ -98,7 +112,13 @@ watch(() => props.message.isTyping, (typing) => {
       </div>
     </div>
 
-    <!-- 回复：AI 回复文本（❓后）+ 图表/表格 -->
+    <!-- 追问卡片：Agent 向用户确认需求 -->
+    <div v-if="clarifyQuestion" class="clarify-card">
+      <div class="clarify-card-icon">💬</div>
+      <div class="clarify-card-text">{{ clarifyQuestion }}</div>
+    </div>
+
+    <!-- 回复 -->
     <div class="answer-container">
       <div v-if="replyText" class="answer-text">
         <MdComponent :message="replyText" />
@@ -171,6 +191,30 @@ watch(() => props.message.isTyping, (typing) => {
         padding-bottom: unset;
         border-bottom: unset;
       }
+    }
+  }
+
+  .clarify-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: rgba(102, 126, 234, 0.06);
+    border-left: 3px solid rgba(102, 126, 234, 0.5);
+
+    .clarify-card-icon {
+      font-size: 18px;
+      line-height: 24px;
+      flex-shrink: 0;
+    }
+
+    .clarify-card-text {
+      font-size: 14px;
+      line-height: 22px;
+      color: rgba(31, 35, 41, 0.85);
+      white-space: pre-wrap;
     }
   }
 

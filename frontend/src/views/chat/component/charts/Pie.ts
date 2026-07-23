@@ -37,25 +37,14 @@ export class Pie extends BaseG2Chart {
       return
     }
 
-    // 比率字段用饼图展示可能产生误导（扇区大小≠整体占比），但允许用户自主决定
-    const yName = y[0].name
-    const yValue = y[0].value
-    if (/率|%|percent|ratio|占比|份额|百分比/i.test(yName)) {
-      console.warn(
-        `[Pie] 注意：Y 轴 “${yName}” 是比率/百分比字段，` +
-        `饼图的扇区大小表示绝对占比（非该比率的占比），请注意区分。` +
-        `如果这不是您想要的，建议切换到 column 或 bar。`
-      )
-      // 不阻止渲染，让用户自行判断
-    }
-
     // 饼图必须 series；按优先级兜底：x 轴 > 非数值非时间 > 非数值 > 任意非 y 轴
     if (series.length == 0) {
+      const yValueForFallback = y[0].value
       const candidates = [
         this.axis.find((a) => a.type === 'x'),
         this.axis.find((a) => a.type !== 'y' && a.type !== 'series' && !isTimeField(data, a.value)),
         this.axis.find((a) => a.type !== 'y' && a.type !== 'series'),
-        this.axis.find((a) => a.value !== yValue),
+        this.axis.find((a) => a.value !== yValueForFallback),
       ]
       const fallback = candidates.find(Boolean)
       if (fallback) {
@@ -69,10 +58,41 @@ export class Pie extends BaseG2Chart {
       return
     }
 
+    // ── y/series 语义校验：y 必须是 metric（数值），series 必须是 dimension（分类）──
+    // 当轴被错误映射（如柱状图切饼图时 y=分类名 series=数值），自动交换纠正。
+    {
+      const yVal = y[0].value
+      const seriesVal = series[0].value
+      const yIsCategorical = isCategoricalField(data, yVal)
+      const seriesIsCategorical = isCategoricalField(data, seriesVal)
+      console.debug(`[Pie] semantic check | y="${yVal}" isCategorical=${yIsCategorical} | series="${seriesVal}" isCategorical=${seriesIsCategorical}`)
+
+      if (yIsCategorical && !seriesIsCategorical) {
+        // y 是分类但 series 是数值 → 典型的轴颠倒，自动交换
+        console.warn(`[Pie] 检测到 y/series 轴颠倒（y="${yVal}" 是分类，series="${seriesVal}" 是数值），自动交换纠正`)
+        const tmp = y[0]
+        y = [{ ...series[0], type: 'y' }]
+        series = [{ ...tmp, type: 'series' }]
+        console.debug(`[Pie] 纠正后 | y="${y[0].value}" series="${series[0].value}"`)
+      }
+    }
+
+    // 比率字段用饼图展示可能产生误导（扇区大小≠整体占比），但允许用户自主决定
+    const yName = y[0].name
+    const yValue = y[0].value
+    if (/率|%|percent|ratio|占比|份额|百分比/i.test(yName)) {
+      console.warn(
+        `[Pie] 注意：Y 轴 “${yName}” 是比率/百分比字段，` +
+        `饼图的扇区大小表示绝对占比（非该比率的占比），请注意区分。` +
+        `如果这不是您想要的，建议切换到 column 或 bar。`
+      )
+      // 不阻止渲染，让用户自行判断
+    }
+
     let _data = checkIsPercent(y, data)
 
     const seriesValue = series[0].value
-    const uniqueSeries = new Set(_data.data.map((d) => String(d[seriesValue] ?? '')))
+    let uniqueSeries = new Set(_data.data.map((d) => String(d[seriesValue] ?? '')))
 
     // 饼图角度通道不支持负数：过滤负值并警告
     const negativeCount = _data.data.filter((d) => Number(d[yValue]) < 0).length
@@ -103,6 +123,7 @@ export class Pie extends BaseG2Chart {
     if (uniqueSeries.size > 10) {
       const aggregated = aggregateToTopN(_data.data, seriesValue, yValue, 9, '其他')
       _data.data = aggregated.data
+      uniqueSeries = new Set(_data.data.map((d) => String(d[seriesValue] ?? '')))
     }
 
     console.debug({ 'render-info': { y: y, series: series, data: _data }, instance: this })
