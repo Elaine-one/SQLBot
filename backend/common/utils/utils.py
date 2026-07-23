@@ -87,8 +87,8 @@ def string_to_numeric_hash(text: str, bits: Optional[int] = 64) -> int:
 
 
 def setup_logging():
-    # 确保日志目录存在
-    log_dir = Path(settings.LOG_DIR)
+    # 确保日志目录存在 — 解析相对于 backend/ 目录的绝对路径
+    log_dir = Path(__file__).resolve().parent.parent.parent / settings.LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     
     # 日志格式

@@ -83,6 +83,17 @@ class AgentMemory:
     conversation_history: str = ""  # injected by adapter from DB history
     is_followup: bool = False  # set by adapter for the second+ message in a chat
 
+    # ── prompt enrichment context (loaded by adapter) ───────
+    terminology_text: str = ""        # matched business terminology (XML)
+    training_examples_text: str = ""  # matched SQL training examples (XML)
+    custom_prompts_text: str = ""     # user-defined custom prompts
+
+    # ── workspace settings (from chat parameters) ───────────
+    sqlbot_name: str = "SQLBot"           # chat.sqlbot_name
+    enable_sql_row_limit: bool = True     # chat.limit_rows
+    context_record_count: int = 5         # chat.context_record_count
+    expand_thinking_block: bool = True    # chat.expand_thinking_block (True=emit reasoning)
+
     # ── iteration control ───────────────────────────────────
     iteration: int = 0
     max_iterations: int = 50   # 对标 LangGraph recursion_limit，复杂多表查询需要更多轮次

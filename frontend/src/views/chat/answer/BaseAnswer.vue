@@ -6,6 +6,7 @@ import MdComponent from '@/views/chat/component/MdComponent.vue'
 import icon_up_outlined from '@/assets/svg/icon_up_outlined.svg'
 import icon_down_outlined from '@/assets/svg/icon_down_outlined.svg'
 import { useI18n } from 'vue-i18n'
+import { useChatConfigStore } from '@/stores/chatConfig.ts'
 
 const props = withDefaults(
   defineProps<{
@@ -26,8 +27,13 @@ const props = withDefaults(
 )
 
 const { t } = useI18n()
+const chatConfig = useChatConfigStore()
 
-const show = ref<boolean>(false)
+// expand_thinking_block controls default state:
+//   true  → always expanded (server-driven default)
+//   false → collapsed unless typing, user can toggle
+const expandThinking = chatConfig.getExpandThinkingBlock
+const show = ref<boolean>(expandThinking)
 
 const rn = computed(() => {
   const raw = props.reasoningName
@@ -77,6 +83,8 @@ function clickShow() {
 onMounted(() => {
   if (props.message.isTyping) {
     show.value = true
+  } else if (!expandThinking && !hasThinking.value) {
+    show.value = false
   }
 })
 
@@ -84,7 +92,9 @@ watch(() => props.message.isTyping, (typing) => {
   if (typing) {
     show.value = true
   } else if (hasThinking.value) {
-    show.value = false
+    // expand_thinking_block=true → keep open after streaming
+    // expand_thinking_block=false → auto-collapse (user can re-open)
+    show.value = expandThinking
   }
 })
 </script>
