@@ -51,6 +51,7 @@ async def create_chart(
         record_id=record_id,
         chart_config=chart_config,
     )
+    memory.mark_chart_this_turn(chart_ref)
     return {
         "success": True,
         "chart_ref": chart_ref,
@@ -81,7 +82,12 @@ async def edit_chart(
             "available_charts": memory.available_chart_refs(),
         }
 
+    # Normalize modifications (LLM may pass flat keys like xField/yField)
+    modifications = _normalize_chart_config_dict(dict(modifications))
     chart.chart_config.update(modifications)
+
+    # Mark for this turn so the executor re-emits the edited chart
+    memory.mark_chart_this_turn(chart_ref)
     memory.terminal_triggered = True
     return {
         "success": True,
