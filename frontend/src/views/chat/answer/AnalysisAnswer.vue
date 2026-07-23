@@ -81,6 +81,22 @@ const stopFlag = ref(false)
 
 const streamState = reactive<Record<string, any>>({})
 
+// Resolve analysis content from either SSE-populated analysis (live)
+// or DB-persisted analysis field (JSON: {"content":"...","reasoning_content":"..."})
+const analysisContent = computed(() => {
+  const record = props.message?.record
+  if (!record) return ''
+  const val = record.analysis
+  if (!val) return ''
+  // Try JSON parse (DB-loaded format)
+  try {
+    const parsed = typeof val === 'string' ? JSON.parse(val) : val
+    if (parsed?.content) return parsed.content
+  } catch {}
+  // Plain text (live SSE or legacy)
+  return val
+})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
@@ -286,7 +302,7 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList.
     :loading="_loading"
     :streaming-state="streamState"
   >
-    <MdComponent :message="message.record?.analysis" style="margin-top: 12px" />
+    <MdComponent :message="analysisContent" style="margin-top: 12px" />
     <ChartBlock
       v-if="message.record?.chart"
       style="margin-top: 12px"

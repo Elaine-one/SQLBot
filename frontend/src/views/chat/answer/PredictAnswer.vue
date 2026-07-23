@@ -85,6 +85,27 @@ const stopFlag = ref(false)
 
 const streamState = reactive<Record<string, any>>({})
 
+// Resolve predict content from either SSE-populated predict_content (live)
+// or DB-persisted predict field (JSON: {"content":"...","reasoning_content":"..."})
+const predictContent = computed(() => {
+  const record = props.message?.record
+  if (!record) return ''
+  // Live SSE streaming
+  if (record.predict_content) return record.predict_content
+  // DB-loaded: parse JSON wrapper
+  if (record.predict) {
+    try {
+      const parsed = typeof record.predict === 'string'
+        ? JSON.parse(record.predict)
+        : record.predict
+      return parsed?.content || ''
+    } catch {
+      return record.predict  // plain text fallback
+    }
+  }
+  return ''
+})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
@@ -323,7 +344,7 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList,
 
 <template>
   <BaseAnswer v-if="message" :message="message" :reasoning-name="['predict']" :loading="_loading" :streaming-state="streamState">
-    <MdComponent :message="message.record?.predict_content" style="margin-top: 12px" />
+    <MdComponent :message="predictContent" style="margin-top: 12px" />
     <ChartBlock
       v-if="message.record?.predict_data?.length > 0 && message.record?.data"
       ref="chartBlockRef"
