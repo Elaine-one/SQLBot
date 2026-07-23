@@ -124,6 +124,11 @@ def _tool_result_summary(tool_name: str, result: dict) -> str:
             count = result.get("count", 0)
             cached = "(缓存)" if result.get("cached") else ""
             return f"搜索完成: {count} 条结果 {cached}"
+        elif tool_name == "preview_sql":
+            rows = result.get("row_count", 0)
+            returned = result.get("returned", 0)
+            truncated = "(截断)" if result.get("truncated") else ""
+            return f"内部查询: {returned}/{rows} 行 {truncated}"
         elif tool_name == "replace_sql_fragment":
             return "SQL 片段已替换"
         elif tool_name == "ask_for_clarification":
@@ -296,12 +301,14 @@ class AgentExecutor:
                                     tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
                                     tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
                                     _log.info(f"[Agent] iter={self.iter_count} tool_call={tc_name}")
-                                    self._emit("tool-call", tool_name=tc_name, args=tc_args)
                                     self._tool_t0 = time.monotonic()
                                     # Stash args keyed by tool name so ToolMessage handler can pair them
                                     self._pending_tool_args = tc_args
                                     if tc_name == "ask_for_clarification":
                                         self._emit("clarify", content=tc_args.get("question", ""))
+                                    # Only push tool-call to frontend for user-visible tools
+                                    if ToolRegistry.is_user_visible(tc_name):
+                                        self._emit("tool-call", tool_name=tc_name, args=tc_args)
 
                         elif isinstance(msg, ToolMessage):
                             elapsed_ms = round((time.monotonic() - self._tool_t0) * 1000) if self._tool_t0 else 0
@@ -323,10 +330,12 @@ class AgentExecutor:
                                 "summary": summary,
                             })
                             _log.info(f"[Agent] tool_result name={msg.name} success={success}")
-                            self._emit("tool-result",
-                                       tool_name=msg.name or "",
-                                       success=success,
-                                       summary=summary)
+                            # Only push tool-result to frontend for user-visible tools
+                            if ToolRegistry.is_user_visible(msg.name):
+                                self._emit("tool-result",
+                                           tool_name=msg.name or "",
+                                           success=success,
+                                           summary=summary)
 
             await self._post_process()
 
@@ -387,13 +396,15 @@ class AgentExecutor:
             await self._execute_and_chart(latest)
             return
 
-        # Chart-only edit
-        if self.memory.terminal_triggered and self.memory.charts:
-            latest_chart = self.memory.get_latest_chart()
+        # Chart-only edit — only emit charts created in the CURRENT turn.
+        # Charts from previous turns were already emitted; re-emitting them
+        # would duplicate the chart in the frontend.
+        if self.memory.terminal_triggered and self.memory._charts_this_turn:
+            latest_chart = self.memory.get_latest_chart_this_turn()
             if latest_chart:
                 query = self.memory.queries.get(latest_chart.record_id)
                 if query and query.status == "executed":
-                    _log.info(f"[Agent] chart-only edit: {latest_chart.chart_ref}")
+                    _log.info(f"[Agent] chart-only edit (this turn): {latest_chart.chart_ref}")
                     await self._emit_chart_from_memory(query, latest_chart)
                     self._emit("sql-data", content="execute-success")
                     return
@@ -535,7 +546,12 @@ class AgentExecutor:
     # ── record finalization ─────────────────────────────────
 
     def _finalize_record_and_chat(self) -> None:
-        """Mark ChatRecord as finished + update Chat.brief + save execution log + sql_answer."""
+        """Mark ChatRecord as finished + update Chat.brief + save execution log + sql_answer.
+
+        sql_answer is only saved for the QA profile.  Analysis / Predict
+        profiles write to their own dedicated columns (ChatRecord.analysis,
+        ChatRecord.predict) via _save_text_answer().
+        """
         record = getattr(self.memory, "record", None)
         session = self.memory.session
         if not record or not session:
@@ -543,24 +559,23 @@ class AgentExecutor:
 
         self._save_execution_log()
 
-        # Persist agent text output + reasoning as sql_answer (JSON format).
-        # Backward compat: old records stored plain text; new records store
-        # {"content":"...", "reasoning_content":"..."}.  Read path handles both.
-        text = (self._text_output or "").strip()
-        reasoning_text = (self._reasoning_output or "").strip()
-        if text or reasoning_text:
-            try:
-                from apps.chat.curd.chat import save_sql_answer
-                answer_json = orjson.dumps({
-                    "content": text,
-                    "reasoning_content": reasoning_text,
-                }).decode()
-                save_sql_answer(session=session, record_id=record.id, answer=answer_json)
-                _log.info(f"[Agent:{self.profile.name}] sql_answer saved "
-                          f"record_id={record.id} content_len={len(text)} "
-                          f"reasoning_len={len(reasoning_text)}")
-            except Exception as exc:
-                _log.info(f"[Agent:{self.profile.name}] save sql_answer failed: {exc}")
+        # ── sql_answer: QA only ──────────────────────────────
+        if self.profile.name == "qa":
+            text = (self._text_output or "").strip()
+            reasoning_text = (self._reasoning_output or "").strip()
+            if text or reasoning_text:
+                try:
+                    from apps.chat.curd.chat import save_sql_answer
+                    answer_json = orjson.dumps({
+                        "content": text,
+                        "reasoning_content": reasoning_text,
+                    }).decode()
+                    save_sql_answer(session=session, record_id=record.id, answer=answer_json)
+                    _log.info(f"[Agent:qa] sql_answer saved "
+                              f"record_id={record.id} content_len={len(text)} "
+                              f"reasoning_len={len(reasoning_text)}")
+                except Exception as exc:
+                    _log.info(f"[Agent:qa] save sql_answer failed: {exc}")
 
         try:
             from apps.chat.curd.chat import finish_record
@@ -724,7 +739,12 @@ class AgentExecutor:
                 _log.info(f"[Agent:{self.profile.name}] chart title re-save skipped: {exc}")
 
     async def _emit_chart_from_memory(self, query, chart_record) -> None:
-        """Save + emit an already-updated chart config (no LLM call)."""
+        """Save + emit an already-updated chart config (no LLM call).
+
+        Only uses query.data directly — does NOT cross-fetch data from
+        other ChatRecords, which would pollute the current record with
+        unrelated data.
+        """
         import orjson as _orjson
         from apps.chat.agent.tools.chart_tools import _normalize_chart_config_dict
         from apps.chat.curd.chat import save_chart_answer, save_chart, save_sql, save_sql_exec_data
@@ -736,6 +756,7 @@ class AgentExecutor:
         chart_str = _orjson.dumps(chart_record.chart_config).decode()
         self._emit("chart", content=chart_str)
         self._emit("sql-data", content="execute-success")
+        self.memory.mark_chart_this_turn(chart_record.chart_ref)
 
         if record and session:
             try:
@@ -745,23 +766,15 @@ class AgentExecutor:
                           f"query_data={'Y' if has_data else 'N'} "
                           f"data_rows={len(query.data.get('data', [])) if has_data else 0}")
                 save_sql(session=session, record_id=record.id, sql=query.sql)
-                if not query.data:
-                    from apps.chat.models.chat_model import ChatRecord as CR
-                    from sqlalchemy import select, and_
-                    row = session.execute(
-                        select(CR.data).where(
-                            and_(CR.chat_id == record.chat_id, CR.data.isnot(None))
-                        ).order_by(CR.id.desc()).limit(1)
-                    ).fetchone()
-                    if row and row.data:
-                        query.data = _orjson.loads(row.data)
-                        _log.info(f"[Agent:{self.profile.name}] chart data fallback used")
                 if query.data:
                     data_str = _orjson.dumps(query.data).decode()
                     _log.info(f"[Agent:{self.profile.name}] saving chart data "
                               f"len={len(data_str)} to record={record.id}")
                     save_sql_exec_data(session=session, record_id=record.id,
                                       data=data_str)
+                else:
+                    _log.info(f"[Agent:{self.profile.name}] chart-only: no data "
+                              f"in query {query.record_id}, skipping data save")
                 save_chart_answer(session=session, record_id=record.id,
                                   answer=_orjson.dumps({"content": "chart updated"}).decode())
                 save_chart(session=session, record_id=record.id, chart=chart_str)
@@ -1281,6 +1294,7 @@ class AgentExecutor:
             record_id=query.record_id,
             chart_config=chart,
         )
+        self.memory.mark_chart_this_turn(chart_ref)
         _log.info(f"[Agent] chart saved to memory: {chart_ref}")
 
     async def _execute_and_chart(self, query) -> None:

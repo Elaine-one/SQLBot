@@ -32,8 +32,8 @@ class AgentProfile:
 
     name: str                               # "qa" | "analysis" | "predict"
     system_prompt: str                      # dedicated system prompt ("" = use graph.py default)
-    tool_names: list[str] = field(default_factory=list)  # explicit list, empty = fallback to all
-    terminal_tools: list[str] = field(default_factory=list)
+    tool_names: list[str] = field(default_factory=list)  # tools available to this profile
+    terminal_tools: list[str] = field(default_factory=list)  # which of those are terminal
     max_iterations: int = 50
     post_process: str = "execute_and_chart"  # "execute_and_chart" | "text_and_chart"
 
@@ -41,7 +41,7 @@ class AgentProfile:
 # ── Profile factories ────────────────────────────────────────
 
 def build_qa_profile() -> AgentProfile:
-    """QA Agent — existing behaviour, explicit tool list."""
+    """QA Agent — explore tables → write SQL → execute → chart."""
     return AgentProfile(
         name="qa",
         system_prompt="",   # graph.py builds it from template
@@ -50,21 +50,22 @@ def build_qa_profile() -> AgentProfile:
             "get_table_metadata",
             "get_table_sample_data",
             "get_field_values",
+            "load_skill",
+            "preview_sql",
+            "execute_sql_query",
+            "analyze_query_result",
             "create_sql_query",
             "create_chart",
             "edit_sql_query",
             "edit_chart",
-            "execute_sql_query",
             "replace_sql_fragment",
             "ask_for_clarification",
-            "analyze_query_result",
-            "load_skill",
         ],
         terminal_tools=[
             "create_sql_query",
             "edit_sql_query",
-            "edit_chart",
             "replace_sql_fragment",
+            "edit_chart",
             "ask_for_clarification",
         ],
         max_iterations=50,
@@ -84,7 +85,9 @@ def build_analysis_profile(base_record) -> AgentProfile:
             "analyze_query_result",
             "ask_for_clarification",
         ],
-        terminal_tools=[],
+        terminal_tools=[
+            "ask_for_clarification",
+        ],
         max_iterations=10,
         post_process="text_and_chart",
     )
@@ -103,7 +106,9 @@ def build_predict_profile(base_record) -> AgentProfile:
             "search_web",
             "ask_for_clarification",
         ],
-        terminal_tools=[],
+        terminal_tools=[
+            "ask_for_clarification",
+        ],
         max_iterations=15,
         post_process="text_and_chart",
     )
@@ -240,10 +245,14 @@ def _build_analysis_or_predict_prompt(base_record, mode: str) -> str:
         role = "数据预测师"
         task = """## 预测任务
 
-1. **历史趋势识别**：从数据中提取变化规律（增长/下降/周期性/季节性）
-2. **外部信息收集**：用 `search_web` 搜索行业趋势和市场动态，校准预测方向
-3. **未来值预测**：给出具体预测值或区间，标明预测周期
-4. **风险与置信度**：说明预测的前提假设、不确定性来源、关键拐点
+你必须严格按以下步骤执行，**每一步都必须调用工具**，不可跳过：
+
+1. **数据理解**：调用 `get_data_summary` 了解每个字段的统计特征
+2. **数据翻阅**：感兴趣时用 `get_data_preview` 翻阅具体数据，识别数据模式
+3. **外部搜索（必须执行）**：调用 `search_web` 搜索行业趋势和市场动态。必须至少调用一次，用数据中的关键维度组合搜索词。如果第一次搜索结果不够相关，换关键词重试。
+4. **深度分析**：需要时用 `analyze_query_result` 做深度分析
+5. **未来值预测**：综合内部数据和外部搜索结果，给出具体预测值或区间，标明预测周期
+6. **风险与置信度**：说明预测的前提假设、不确定性来源、关键拐点
 
 ## 工具使用
 
@@ -251,7 +260,7 @@ def _build_analysis_or_predict_prompt(base_record, mode: str) -> str:
 |------|------|
 | `get_data_summary` | **第一步**：查看每个字段的统计特征 |
 | `get_data_preview` | 翻阅具体数据，识别数据模式 |
-| `search_web` | **预测关键**：搜索行业趋势、市场报告、最新政策 |
+| `search_web` | **【必须调用】** 搜索行业趋势、市场报告、最新政策。不调用则预测缺乏外部依据 |
 | `analyze_query_result` | 对特定维度做深度分析 |
 
 > 你的分析完成后，系统会自动基于数据生成预测趋势图。
@@ -259,7 +268,8 @@ def _build_analysis_or_predict_prompt(base_record, mode: str) -> str:
 
 ## `search_web` 使用指南
 
-在了解数据后，**用 `search_web` 搜索外部信息辅助预测**：
+**必须至少调用一次 `search_web`**，否则预测结果不可信：
+
 - 行业关键词 + "2026 趋势" / "增长率" / "市场规模"
 - 数据中关键产品/类目 + "行情" / "预测"
 - 时间特征 + "旺季" / "淡季"
@@ -267,9 +277,10 @@ def _build_analysis_or_predict_prompt(base_record, mode: str) -> str:
 
 ## 输出要求
 
-- 先列出搜索到的外部信息要点（如有）
+- **先列出搜索到的外部信息要点**（必须包含）
 - 再分析历史数据趋势
-- 然后给出预测及依据
+- 然后给出预测及依据（结合外部信息说明）
+- 最后说明预测的局限性和置信度
 - 使用 Markdown 格式，层次清晰"""
 
     row_count = len(rows)

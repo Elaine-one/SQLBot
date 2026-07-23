@@ -69,6 +69,10 @@ class AgentMemory:
     # ── produced artifacts ──────────────────────────────────
     queries: dict[str, QueryRecord] = field(default_factory=dict)
     charts: dict[str, ChartRecord] = field(default_factory=dict)
+    _charts_this_turn: set[str] = field(default_factory=set)
+    # Runtime set of chart_refs created in the current turn.
+    # NOT persisted — cleared each turn.  Used by executor to
+    # avoid re-emitting charts from previous turns.
 
     # ── schema exploration cache ────────────────────────────
     explored_tables: dict[str, dict] = field(default_factory=dict)
@@ -109,6 +113,24 @@ class AgentMemory:
         if not self.charts:
             return None
         return list(self.charts.values())[-1]
+
+    def get_latest_chart_this_turn(self) -> Optional[ChartRecord]:
+        """Return the most recent chart created in the CURRENT turn only.
+
+        Falls back to get_latest_chart() so callers that don't populate
+        _charts_this_turn still work (e.g. executor.py post-processing
+        of chart-only edits).
+        """
+        if self._charts_this_turn:
+            # Find the chart with the highest insertion order among this-turn refs
+            for ref in reversed(list(self.charts.keys())):
+                if ref in self._charts_this_turn:
+                    return self.charts[ref]
+        return None
+
+    def mark_chart_this_turn(self, chart_ref: str) -> None:
+        """Record that a chart was created in the current turn."""
+        self._charts_this_turn.add(chart_ref)
 
     def get_context_for_llm(self) -> str:
         """

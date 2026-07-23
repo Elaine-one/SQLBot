@@ -16,14 +16,22 @@ from apps.chat.agent.memory import AgentMemory
 
 @dataclass
 class ToolDef:
-    """Definition of a single agent tool."""
+    """Definition of a single agent tool.
+
+    terminal     — success stops the agent loop.
+    show_to_user — tool-call / tool-result events are pushed to the frontend
+                   SSE stream so the user can see them (in the execution
+                   details drawer and inline indicators).  Internal exploration
+                   tools set this to False.
+    """
 
     name: str
     description: str
     parameters: dict  # JSON Schema for the tool's arguments
     fn: Callable[..., Any]  # async fn(**kwargs, memory: AgentMemory) -> dict
     terminal: bool = False
-    category: str = ""  # "explore" | "create" | "edit" | "execute"
+    show_to_user: bool = False
+    category: str = ""  # "explore" | "create" | "edit" | "execute" | "internal"
 
     def to_openai_schema(self) -> dict:
         return {
@@ -98,3 +106,19 @@ class ToolRegistry:
     @classmethod
     def names(cls) -> list[str]:
         return sorted(cls._tools.keys())
+
+    @classmethod
+    def is_user_visible(cls, name: str) -> bool:
+        """Return True if this tool's events should be emitted to the frontend."""
+        tool = cls._tools.get(name)
+        return tool is not None and tool.show_to_user
+
+    @classmethod
+    def get_user_visible_schemas(cls) -> list[dict]:
+        """Return OpenAI schemas only for tools marked show_to_user=True."""
+        return [t.to_openai_schema() for t in cls._tools.values() if t.show_to_user]
+
+    @classmethod
+    def get_terminal_tool_names(cls) -> list[str]:
+        """Return names of all terminal tools (single source of truth)."""
+        return sorted(name for name, t in cls._tools.items() if t.terminal)
