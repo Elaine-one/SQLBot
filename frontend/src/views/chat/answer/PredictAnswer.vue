@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import BaseAnswer from './BaseAnswer.vue'
 import { chatApi, ChatInfo, type ChatMessage, ChatRecord } from '@/api/chat.ts'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
 import ChartBlock from '@/views/chat/chat-block/ChartBlock.vue'
 
@@ -82,9 +82,14 @@ const _loading = computed({
 })
 
 const stopFlag = ref(false)
+
+const streamState = reactive<Record<string, any>>({})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
+  Object.keys(streamState).forEach(k => delete streamState[k])
+  let hasNativeReasoning = false
 
   if (index.value < 0) {
     _loading.value = false
@@ -170,15 +175,21 @@ const sendMessage = async () => {
                 emits('error', currentRecord.id)
                 break
               case 'reasoning':
+                hasNativeReasoning = true
                 predict_answer += data.content
-                _currentChat.value.records[index.value].predict = predict_answer
+                streamState.predict = predict_answer
+                break
+              case 'clarify':
+                if (data.content) {
+                  streamState.clarify_question = data.content
+                }
                 break
               case 'text-delta':
                 predict_content += data.content
                 _currentChat.value.records[index.value].predict_content = predict_content
-                if (data.reasoning_content) {
-                  predict_answer += data.reasoning_content
-                  _currentChat.value.records[index.value].predict = predict_answer
+                // Fallback：非推理模型用 text-delta 作为思考内容
+                if (!hasNativeReasoning && data.content) {
+                  streamState.predict = (streamState.predict || '') + data.content
                 }
                 break
               case 'tool-call':
@@ -311,7 +322,7 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList,
 </script>
 
 <template>
-  <BaseAnswer v-if="message" :message="message" :reasoning-name="['predict']" :loading="_loading">
+  <BaseAnswer v-if="message" :message="message" :reasoning-name="['predict']" :loading="_loading" :streaming-state="streamState">
     <MdComponent :message="message.record?.predict_content" style="margin-top: 12px" />
     <ChartBlock
       v-if="message.record?.predict_data?.length > 0 && message.record?.data"

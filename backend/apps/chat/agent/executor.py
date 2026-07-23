@@ -171,6 +171,8 @@ class AgentExecutor:
         self.iter_count: int = 0
         # Accumulate text output for save (analysis/predict)
         self._text_output: str = ""
+        # Accumulate reasoning_content (DeepSeek native think) for persistence
+        self._reasoning_output: str = ""
         # Execution tracking
         self._exec_start_time: float = 0.0
         self._tool_logs: list[dict] = []
@@ -228,6 +230,11 @@ class AgentExecutor:
 
         _log.info(f"[Agent] START question='{user_question[:80]}' thread={thread_id}")
 
+        # 统一开启 thinking mode（OpenAI 格式，所有模型通用）。
+        # content 为空时由 _build_turn_summary_text 生成摘要补齐回复区。
+        object.__setattr__(self.llm, "enable_thinking", True)
+        _log.info(f"[Agent] enable_thinking=True profile={self.profile.name}")
+
         initial_state = {
             "messages": [HumanMessage(content=user_question)],
             "iteration": 0,
@@ -239,6 +246,7 @@ class AgentExecutor:
         }
         self.iter_count = 0
         self._text_output = ""
+        self._reasoning_output = ""
         self._exec_start_time = time.monotonic()
         self._tool_logs = []
         self._token_usage = {"prompt": 0, "completion": 0}
@@ -264,16 +272,24 @@ class AgentExecutor:
                                 if isinstance(ak, dict):
                                     reasoning = ak.get("reasoning_content", "") or ""
 
-                            # Emit reasoning first (thinking process)
+                            # Emit native reasoning (DeepSeek-R1 etc.)
                             if reasoning and reasoning.strip():
                                 self._emit("reasoning", content=reasoning)
+                                self._reasoning_output += reasoning
 
-                            # Emit visible content
+                            # Split content by intent:
+                            # - has tool_calls → exploration phase → thinking panel
+                            # - no tool_calls  → final answer     → reply area
+                            has_tools = bool(msg.tool_calls)
                             if isinstance(content, str) and content.strip():
-                                self._emit("text-delta",
-                                           content=content,
-                                           reasoning_content=reasoning or "")
-                                self._text_output += content
+                                if has_tools:
+                                    # Exploration narrative — goes to thinking panel
+                                    self._emit("reasoning", content=content)
+                                    self._reasoning_output += content
+                                else:
+                                    # Final answer — goes to reply area
+                                    self._emit("text-delta", content=content)
+                                    self._text_output += content
 
                             if msg.tool_calls:
                                 for tc in msg.tool_calls:
@@ -313,6 +329,14 @@ class AgentExecutor:
                                        summary=summary)
 
             await self._post_process()
+
+            # thinking mode 开启后 content 可能为空（模型输出转为 tool_call），
+            # 用查询执行摘要作为 text-delta 确保回复区始终有内容。
+            if not self._text_output.strip():
+                summary = self._build_turn_summary_text()
+                if summary:
+                    self._emit("text-delta", content=summary)
+                    self._text_output = summary
 
         finally:
             self._emit("execution-stats",
@@ -394,16 +418,21 @@ class AgentExecutor:
             return
 
         text = (self._text_output or "").strip()
-        if not text:
-            _log.info(f"[Agent:{self.profile.name}] save skipped: empty text output "
+        reasoning_text = (self._reasoning_output or "").strip()
+        if not text and not reasoning_text:
+            _log.info(f"[Agent:{self.profile.name}] save skipped: empty output "
                       f"(iterations={self.iter_count})")
             return
 
         _log.info(f"[Agent:{self.profile.name}] saving answer "
                   f"record_id={record.id} text_len={len(text)} "
+                  f"reasoning_len={len(reasoning_text)} "
                   f"iterations={self.iter_count}")
 
-        answer_json = orjson.dumps({"content": text}).decode()
+        answer_json = orjson.dumps({
+            "content": text,
+            "reasoning_content": reasoning_text,
+        }).decode()
 
         try:
             if self.profile.name == "analysis":
@@ -514,18 +543,22 @@ class AgentExecutor:
 
         self._save_execution_log()
 
-        # Persist agent text output as sql_answer so the thinking
-        # process is visible when the user re-opens the chat from history.
-        # The old LLMService pipeline does this in generate_sql(); the
-        # Agent pipeline was missing this save, causing sql_answer to
-        # always be NULL for agent-produced records.
+        # Persist agent text output + reasoning as sql_answer (JSON format).
+        # Backward compat: old records stored plain text; new records store
+        # {"content":"...", "reasoning_content":"..."}.  Read path handles both.
         text = (self._text_output or "").strip()
-        if text:
+        reasoning_text = (self._reasoning_output or "").strip()
+        if text or reasoning_text:
             try:
                 from apps.chat.curd.chat import save_sql_answer
-                save_sql_answer(session=session, record_id=record.id, answer=text)
+                answer_json = orjson.dumps({
+                    "content": text,
+                    "reasoning_content": reasoning_text,
+                }).decode()
+                save_sql_answer(session=session, record_id=record.id, answer=answer_json)
                 _log.info(f"[Agent:{self.profile.name}] sql_answer saved "
-                          f"record_id={record.id} len={len(text)}")
+                          f"record_id={record.id} content_len={len(text)} "
+                          f"reasoning_len={len(reasoning_text)}")
             except Exception as exc:
                 _log.info(f"[Agent:{self.profile.name}] save sql_answer failed: {exc}")
 
@@ -539,6 +572,24 @@ class AgentExecutor:
             _update_chat_brief(session, record)
         except Exception as exc:
             _log.info(f"update_brief skipped: {exc}")
+
+    def _build_turn_summary_text(self) -> str:
+        """Build a one-line text summary of the completed query + chart."""
+        parts: list[str] = []
+        latest = self.memory.get_latest_query()
+        if latest:
+            if latest.tables_used:
+                parts.append(f"已查询 {', '.join(latest.tables_used[:3])}")
+            if latest.row_count > 0:
+                parts.append(f"返回 {latest.row_count} 行")
+            elif latest.data:
+                parts.append("已返回数据")
+        if self.memory.charts:
+            chart = self.memory.get_latest_chart()
+            if chart and chart.chart_config:
+                ctype = chart.chart_config.get("type", "?") if isinstance(chart.chart_config, dict) else "?"
+                parts.append(f"生成{ctype}图表")
+        return "，".join(parts) if parts else ""
 
     def _finalize_turn(self) -> None:
         """Generate a compact turn summary for cross-turn context."""

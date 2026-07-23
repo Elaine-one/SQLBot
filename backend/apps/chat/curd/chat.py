@@ -481,12 +481,20 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
 def format_record(record: ChatRecordResult):
     _dict = record.model_dump()
 
+    # sql_answer: new format is JSON {"content":"...", "reasoning_content":"..."}
+    # old format is plain text (possibly with ❓ markers).  Handle both.
     if record.sql_answer and record.sql_answer.strip() != '' and record.sql_answer.strip()[0] == '{' and \
             record.sql_answer.strip()[-1] == '}':
-        _obj = orjson.loads(record.sql_answer)
-        _dict['sql_answer'] = _obj.get('reasoning_content')
+        try:
+            _obj = orjson.loads(record.sql_answer)
+            if isinstance(_obj, dict) and 'content' in _obj:
+                _dict['sql_answer'] = _obj.get('content', record.sql_answer)
+                _dict['sql_reasoning_content'] = _obj.get('reasoning_content', '') or _dict.get('sql_reasoning_content', '')
+        except Exception:
+            pass  # not valid JSON, keep original
+    # ChatLog join may also provide reasoning (takes precedence if non-empty)
     if record.sql_reasoning_content and record.sql_reasoning_content.strip() != '':
-        _dict['sql_answer'] = record.sql_reasoning_content
+        _dict['sql_reasoning_content'] = record.sql_reasoning_content
     if record.chart_answer and record.chart_answer.strip() != '' and record.chart_answer.strip()[0] == '{' and \
             record.chart_answer.strip()[-1] == '}':
         _obj = orjson.loads(record.chart_answer)

@@ -45,6 +45,7 @@ export class ChatRecord {
   chart?: string
   analysis?: string
   analysis_thinking?: string
+  sql_reasoning_content?: string
   predict?: string
   predict_content?: string
   predict_data?: string | any
@@ -81,6 +82,7 @@ export class ChatRecord {
     chart: string | undefined,
     analysis: string | undefined,
     analysis_thinking: string | undefined,
+    sql_reasoning_content: string | undefined,
     predict: string | undefined,
     predict_content: string | undefined,
     predict_data: string | any | undefined,
@@ -109,6 +111,7 @@ export class ChatRecord {
     chart?: string,
     analysis?: string,
     analysis_thinking?: string,
+    sql_reasoning_content?: string,
     predict?: string,
     predict_content?: string,
     predict_data?: string | any,
@@ -136,6 +139,7 @@ export class ChatRecord {
     this.chart = chart
     this.analysis = analysis
     this.analysis_thinking = analysis_thinking
+    this.sql_reasoning_content = sql_reasoning_content
     this.predict = predict
     this.predict_content = predict_content
     this.predict_data = predict_data
@@ -280,6 +284,7 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
     data.chart,
     data.analysis,
     data.analysis_thinking,
+    data.sql_reasoning_content,
     data.predict,
     data.predict_content,
     data.predict_data,

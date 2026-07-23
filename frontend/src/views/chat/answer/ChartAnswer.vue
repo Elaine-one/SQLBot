@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import BaseAnswer from './BaseAnswer.vue'
 import { Chat, chatApi, ChatInfo, type ChatMessage, ChatRecord, questionApi } from '@/api/chat.ts'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import ChartBlock from '@/views/chat/chat-block/ChartBlock.vue'
 import JSONBig from 'json-bigint'
 
@@ -84,10 +84,16 @@ const _loading = computed({
 
 const stopFlag = ref(false)
 
+// 流式状态：代替直接写 class 实例属性，确保 Vue 响应式追踪
+const streamState = reactive<Record<string, any>>({})
+
 const sendMessage = async () => {
   console.log('[ChartAnswer] sendMessage called, index:', index.value, 'question:', _currentChat.value.records[index.value]?.question)
   stopFlag.value = false
   _loading.value = true
+  // 重置流式状态
+  Object.keys(streamState).forEach(k => delete streamState[k])
+  let hasNativeReasoning = false
 
   if (index.value < 0) {
     console.log('[ChartAnswer] sendMessage ABORT: index < 0')
@@ -238,10 +244,16 @@ const sendMessage = async () => {
               }
               break
             case 'clarify':
-              // Agent asks a clarification question — show prominently
+              // Agent asks a clarification question — write to reactive streamState
               if (data.content) {
-                sql_answer += '❓ ' + data.content
-                _currentChat.value.records[index.value].sql_answer = sql_answer
+                streamState.clarify_question = data.content
+              }
+              break
+            case 'reasoning':
+              // DeepSeek native reasoning_content — write to reactive streamState
+              if (data.content) {
+                hasNativeReasoning = true
+                streamState.sql_reasoning_content = (streamState.sql_reasoning_content || '') + data.content
               }
               break
             case 'execution-stats':
@@ -325,7 +337,7 @@ defineExpose({ sendMessage, index: () => index.value, stop })
 </script>
 
 <template>
-  <BaseAnswer v-if="message" :message="message" :reasoning-name="reasoningName" :loading="_loading">
+  <BaseAnswer v-if="message" :message="message" :reasoning-name="reasoningName" :loading="_loading" :streaming-state="streamState">
     <ChartBlock
       style="margin-top: 6px"
       :message="message"

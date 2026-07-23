@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import BaseAnswer from './BaseAnswer.vue'
 import { chatApi, ChatInfo, type ChatMessage, ChatRecord } from '@/api/chat.ts'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
 import ChartBlock from '@/views/chat/chat-block/ChartBlock.vue'
 const props = withDefaults(
@@ -78,9 +78,14 @@ const _loading = computed({
 })
 
 const stopFlag = ref(false)
+
+const streamState = reactive<Record<string, any>>({})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
+  Object.keys(streamState).forEach(k => delete streamState[k])
+  let hasNativeReasoning = false
 
   if (index.value < 0) {
     _loading.value = false
@@ -167,16 +172,21 @@ const sendMessage = async () => {
                 emits('error', currentRecord.id)
                 break
               case 'reasoning':
+                hasNativeReasoning = true
                 analysis_answer_thinking += data.content
-                _currentChat.value.records[index.value].analysis_thinking = analysis_answer_thinking
+                streamState.analysis_thinking = analysis_answer_thinking
+                break
+              case 'clarify':
+                if (data.content) {
+                  streamState.clarify_question = data.content
+                }
                 break
               case 'text-delta':
                 analysis_answer += data.content
                 _currentChat.value.records[index.value].analysis = analysis_answer
-                // Capture reasoning_content from text-delta if present (fallback)
-                if (data.reasoning_content) {
-                  analysis_answer_thinking += data.reasoning_content
-                  _currentChat.value.records[index.value].analysis_thinking = analysis_answer_thinking
+                // Fallback：非推理模型用 text-delta 作为思考内容
+                if (!hasNativeReasoning && data.content) {
+                  streamState.analysis_thinking = (streamState.analysis_thinking || '') + data.content
                 }
                 break
               case 'tool-call':
@@ -274,6 +284,7 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList.
     :message="message"
     :reasoning-name="['analysis_thinking']"
     :loading="_loading"
+    :streaming-state="streamState"
   >
     <MdComponent :message="message.record?.analysis" style="margin-top: 12px" />
     <ChartBlock
