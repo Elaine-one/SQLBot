@@ -208,7 +208,7 @@ docker-compose.override.yaml
 start-external-pg.sh
 
 # Local analysis docs
-docs/
+# docs/  ← 注释掉：已整理为正式项目文档
 
 # ── Local debug & temp ──
 .dbg/
