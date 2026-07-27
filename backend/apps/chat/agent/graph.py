@@ -23,6 +23,74 @@ from apps.chat.agent.memory import AgentMemory
 from apps.chat.agent.tools.registry import ToolRegistry
 
 
+def _build_dialect_guide(dialect, ds_type: str) -> str:
+    """Build a database-specific SQL syntax guide from the Dialect registry.
+
+    Injected directly into the system prompt so the LLM always knows
+    the correct SQL dialect — no need to call load_skill for basic syntax.
+    """
+    quote = dialect.quote_char
+    if quote == '"':
+        quote_desc = "双引号"
+        quote_open = quote_close = '"'
+    elif quote == '`':
+        quote_desc = "反引号"
+        quote_open = quote_close = '`'
+    elif quote == '[':
+        quote_desc = "方括号"
+        quote_open, quote_close = '[', ']'
+    else:
+        quote_desc = quote
+        quote_open = quote_close = quote
+
+    quote_example = f'{quote_open}table_name{quote_close}'
+    quote_select = f'SELECT {quote_open}column{quote_close} FROM {quote_open}table{quote_close}'
+
+    # Row limit syntax
+    if dialect.supports_explain and dialect.explain_prefix == "EXPLAIN ":
+        # MySQL/PG/CK style
+        limit_syntax = "LIMIT N"
+    elif dialect.db_type == "sqlServer":
+        limit_syntax = "TOP N"
+    elif dialect.db_type in ("oracle", "dm"):
+        limit_syntax = "WHERE ROWNUM <= N"
+    else:
+        limit_syntax = "LIMIT N"
+
+    guide = f"""## SQL 方言指南: {dialect.display_name}
+
+- 标识符引用: {quote_desc}，如 {quote_select}
+- 行数限制: {limit_syntax}
+{f'- 注意: 不支持 EXPLAIN 语法，写 SQL 时不需要考虑 EXPLAIN 兼容性' if not dialect.supports_explain else ''}
+- 只写 {dialect.display_name} 兼容的 SQL，禁止混用其他数据库语法
+"""
+
+    if dialect.db_type == "sqlServer":
+        guide += """
+- 字符串拼接: CONCAT() 或 + 运算符
+- 百分比格式化: CONVERT(VARCHAR, ROUND(x*100, 2)) + '%'
+- 分页: OFFSET N ROWS FETCH NEXT M ROWS ONLY（需配合 ORDER BY）
+"""
+    elif dialect.db_type in ("oracle", "dm"):
+        guide += """
+- 字符串拼接: || 运算符
+- 注意 Oracle 对别名和 GROUP BY 的严格限制
+"""
+    elif dialect.db_type in ("mysql", "doris", "starrocks"):
+        guide += """
+- 字符串拼接: CONCAT()
+- 百分比格式化: CONCAT(ROUND(x*100, 2), '%')
+"""
+    elif dialect.db_type == "pg":
+        guide += """
+- 字符串拼接: || 运算符
+- 类型转换: ::type 语法
+"""
+
+    guide += f"\n数据源类型: {ds_type} ({dialect.display_name})\n"
+    return guide
+
+
 def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
                          profile=None) -> str:
     """Build the system prompt for the agent.
@@ -45,6 +113,12 @@ def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
     context = memory.get_context_for_llm()
     sqlbot_name = memory.sqlbot_name or "SQLBot"
     limit_rows = memory.enable_sql_row_limit
+    ds_type = memory.datasource_type or "unknown"
+
+    # ── Auto-inject SQL dialect guide (database-specific syntax) ──
+    from apps.db.dialect import get_dialect
+    db_dialect = get_dialect(ds_type)
+    dialect_guide = _build_dialect_guide(db_dialect, ds_type)
 
     base = f"""你是 {sqlbot_name}，一个数据分析助手。通过调用工具完成数据查询和可视化。
 
@@ -106,8 +180,8 @@ def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
 
 ## 查询规范
 
-{f"- 明细数据必须加 LIMIT，默认 1000；聚合查询不需要" if limit_rows else ""}
-- 用户说"全部""所有"时不加 LIMIT
+{f"- 明细数据必须限制返回行数，默认 1000；聚合查询不需要" if limit_rows else ""}
+- 用户说"全部""所有"时不限制行数
 
 ## ⚠️ 关键规则
 
@@ -119,8 +193,7 @@ def _build_system_prompt(memory: AgentMemory, is_followup: bool = False,
 - **终端工具**：create_sql_query / edit_sql_query / replace_sql_fragment / edit_chart / ask_for_clarification
   成功 → 本轮完成。失败 → 修正后重试。
 
-数据源类型: {ds_type}
-"""
+{dialect_guide}"""
 
     # ═══ DataEase dataset guidance (assistant mode only) ═══
     if memory.out_ds_instance is not None:

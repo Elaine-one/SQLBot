@@ -80,7 +80,53 @@ async def preview_sql(
             "error": f"表 {unknown} 的字段结构尚未获取。请先调用 get_table_metadata",
         }
 
-    # 5. Execute with row limit
+    # 5. JOIN condition review
+    from apps.chat.agent.tools.sql_tools import (
+        _check_join_conditions, _resolve_dialect,
+    )
+    join_warnings = _check_join_conditions(compiled, dialect=_resolve_dialect(ds_type))
+    if join_warnings:
+        return {
+            "success": False,
+            "error": "JOIN 条件可能存在问题: " + "；".join(join_warnings),
+            "hint": "请检查关联字段是否为唯一标识字段。",
+        }
+
+    # 6. DB-level dry-run validation
+    from apps.db.dialect import get_dialect
+    db_dialect = get_dialect(ds_type)
+    if db_dialect.supports_explain and db_dialect.explain_prefix:
+        from apps.db.db import exec_sql as _exec_raw
+        try:
+            explain_sql = f"{db_dialect.explain_prefix}{compiled}"
+            _exec_raw(ds=memory.ds, sql=explain_sql)
+        except Exception as exc:
+            err_msg = str(exc).split("\\n")[0][:300] if "\\n" in str(exc) else str(exc)[:300]
+            return {
+                "success": False,
+                "error": f"SQL 校验失败: {err_msg}",
+                "hint": "请根据错误信息修正 SQL",
+            }
+    elif db_dialect.db_type == "sqlServer":
+        from apps.db.db import get_engine
+        from sqlalchemy import text
+        try:
+            engine = get_engine(memory.ds, timeout=10)
+            with engine.connect() as conn:
+                conn.execute(text("SET NOEXEC ON"))
+                try:
+                    conn.execute(text(compiled))
+                finally:
+                    conn.execute(text("SET NOEXEC OFF"))
+        except Exception as exc:
+            err_msg = str(exc).split("\\n")[0][:300] if "\\n" in str(exc) else str(exc)[:300]
+            return {
+                "success": False,
+                "error": f"SQL 校验失败: {err_msg}",
+                "hint": "请根据错误信息修正 SQL",
+            }
+
+    # 7. Execute with row limit
     from apps.db.db import exec_sql
     try:
         result = exec_sql(ds=memory.ds, sql=compiled)

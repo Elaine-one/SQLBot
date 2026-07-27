@@ -35,20 +35,13 @@ def _first_keyword(sql: str) -> str:
 
 
 def _resolve_dialect(ds_type: str) -> str | None:
-    """Map datasource type to a sqlglot dialect name."""
-    from common.utils.utils import equals_ignore_case
-    mapping = {
-        "mysql": "mysql", "doris": "mysql", "starrocks": "mysql",
-        "sqlServer": "tsql",
-        "hive": "hive",
-        "postgresql": "postgres",
-        "ck": "clickhouse",
-        "oracle": "oracle",
-    }
-    for key, dialect in mapping.items():
-        if equals_ignore_case(ds_type, key):
-            return dialect
-    return None
+    """Map datasource type to a sqlglot dialect name.
+
+    Delegates to the authoritative ``DatabaseDialect`` registry so that
+    dialect mappings are defined in exactly one place.
+    """
+    from apps.db.dialect import get_dialect
+    return get_dialect(ds_type).sqlglot_dialect
 
 
 def _validate_sql_syntax(sql: str, ds_type: str) -> tuple[bool, str]:
@@ -74,7 +67,7 @@ def _validate_sql_syntax(sql: str, ds_type: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _check_join_conditions(sql: str) -> list[str]:
+def _check_join_conditions(sql: str, dialect: str | None = None) -> list[str]:
     """检查 JOIN ON 条件是否存在常见问题。返回警告信息列表。
 
     不依赖业务知识，仅做通用结构检查:
@@ -83,12 +76,16 @@ def _check_join_conditions(sql: str) -> list[str]:
       3. 同一个 JOIN 是否只有非唯一字段关联
 
     这是一个软检查: 不阻止SQL生成，只返回警告供 LLM 自我修正。
+
+    *dialect* is the sqlglot dialect name (e.g. "tsql", "mysql") so that
+    database-specific syntax (CROSS APPLY, (+) joins, etc.) is parsed
+    correctly rather than silently dropped.
     """
     import sqlglot.expressions as exp
 
     warnings: list[str] = []
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, dialect=dialect)
         if not tree:
             return warnings
 
@@ -265,7 +262,7 @@ async def create_sql_query(
         return {"success": False, "error": str(exc)}
 
     # 4. JOIN condition review — 通用检查：ON 条件两端是否都没有 ID 类字段
-    join_warnings = _check_join_conditions(compiled)
+    join_warnings = _check_join_conditions(compiled, dialect=_resolve_dialect(ds_type))
     if join_warnings:
         memory.sql_retry_count += 1
         return {
@@ -288,18 +285,46 @@ async def create_sql_query(
             "action_required": "请对每张表调用 get_table_metadata(table_name=...) 获取字段结构",
         }
 
-    # 6. EXPLAIN validation against compiled SQL
-    try:
-        from apps.db.db import exec_sql as _exec_raw
-        explain_sql = f"EXPLAIN {compiled}"
-        _exec_raw(ds=memory.ds, sql=explain_sql)
-    except Exception as exc:
-        err_msg = str(exc).split("\\n")[0][:300] if "\\n" in str(exc) else str(exc)[:300]
-        return {
-            "success": False,
-            "error": f"SQL 校验失败: {err_msg}",
-            "hint": "请根据错误信息修正 SQL 中的列名或表名，然后重新调用 create_sql_query",
-        }
+    # 6. DB-level dry-run validation against compiled SQL.
+    #    Uses each database's native mechanism:
+    #      MySQL/PG/CK  → EXPLAIN
+    #      SQL Server   → SET NOEXEC ON  (compile without executing)
+    #      Oracle       → skipped (EXPLAIN PLAN FOR has different syntax)
+    #      DM/es/hive   → skipped (no lightweight equivalent)
+    from apps.db.dialect import get_dialect
+    db_dialect = get_dialect(ds_type)
+    if db_dialect.supports_explain and db_dialect.explain_prefix:
+        try:
+            from apps.db.db import exec_sql as _exec_raw
+            explain_sql = f"{db_dialect.explain_prefix}{compiled}"
+            _exec_raw(ds=memory.ds, sql=explain_sql)
+        except Exception as exc:
+            err_msg = str(exc).split("\\n")[0][:300] if "\\n" in str(exc) else str(exc)[:300]
+            return {
+                "success": False,
+                "error": f"SQL 校验失败: {err_msg}",
+                "hint": "请根据错误信息修正 SQL 中的列名或表名，然后重新调用 create_sql_query",
+            }
+    elif db_dialect.db_type == "sqlServer":
+        # SQL Server: SET NOEXEC ON compiles the query (full name resolution,
+        # type checking) without actually executing it — equivalent to EXPLAIN.
+        try:
+            from apps.db.db import get_engine
+            from sqlalchemy import text
+            engine = get_engine(memory.ds, timeout=10)
+            with engine.connect() as conn:
+                conn.execute(text("SET NOEXEC ON"))
+                try:
+                    conn.execute(text(compiled))
+                finally:
+                    conn.execute(text("SET NOEXEC OFF"))  # always reset
+        except Exception as exc:
+            err_msg = str(exc).split("\\n")[0][:300] if "\\n" in str(exc) else str(exc)[:300]
+            return {
+                "success": False,
+                "error": f"SQL 校验失败: {err_msg}",
+                "hint": "请根据错误信息修正 SQL 中的列名或表名，然后重新调用 create_sql_query",
+            }
 
     # 6. Extract table names from ORIGINAL SQL for tables_used.
     #    Dataset names are valid here — they represent DataEase views whose

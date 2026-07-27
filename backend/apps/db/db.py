@@ -111,6 +111,9 @@ def get_extra_config(conf: DatasourceConf):
 def get_origin_connect(type: str, conf: DatasourceConf):
     extra_config_dict = get_extra_config(conf)
     if equals_ignore_case(type, "sqlServer"):
+        from apps.db.dialect import get_dialect
+        sqlserver_dialect = get_dialect("sqlServer")
+        charset = sqlserver_dialect.charset or "UTF-8"
         # none or true, set tds_version = 7.0
         if conf.lowVersion is None or conf.lowVersion:
             return pymssql.connect(
@@ -121,6 +124,7 @@ def get_origin_connect(type: str, conf: DatasourceConf):
                 database=conf.database,
                 timeout=conf.timeout,
                 tds_version='7.0',  # options: '4.2', '7.0', '8.0' ...,
+                charset=charset,
                 **extra_config_dict
             )
         else:
@@ -131,6 +135,7 @@ def get_origin_connect(type: str, conf: DatasourceConf):
                 password=conf.password,
                 database=conf.database,
                 timeout=conf.timeout,
+                charset=charset,
                 **extra_config_dict
             )
 
@@ -521,7 +526,29 @@ def convert_value(value, datetime_format='space'):
         """
     if value is None:
         return None
-        # 处理 bytes 类型（包括 BIT 字段）
+
+    # ── Repair mojibake: SQL Server varchar may arrive as a garbled
+    #     str when pymssql/FreeTDS mis-decodes the server's code page.
+    #     Detect high-ratio Latin-1 bytes → re-encode → decode as GBK.
+    if isinstance(value, str) and len(value) > 0:
+        latin1_chars = sum(1 for c in value if '\x80' <= c <= '\xff')
+        if latin1_chars > 0 and latin1_chars / len(value) > 0.3:
+            # Looks like mojibake — try to repair
+            try:
+                raw = value.encode('latin-1')
+            except UnicodeEncodeError:
+                raw = None
+            if raw is not None:
+                for enc in ("gbk", "gb2312", "cp936", "gb18030"):
+                    try:
+                        repaired = raw.decode(enc)
+                        if any('一' <= c <= '鿿' or '　' <= c <= '〿'
+                               for c in repaired):
+                            return repaired
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+
+    # 处理 bytes 类型（包括 BIT 字段）
     if isinstance(value, bytes):
         # 1. 尝试判断是否是 BIT 类型
         if len(value) <= 8:  # BIT 类型通常不会很长
@@ -542,12 +569,31 @@ def convert_value(value, datetime_format='space'):
         try:
             return value.decode('utf-8')
         except UnicodeDecodeError:
-            # 3. 如果包含非打印字符，返回十六进制
-            if any(b < 32 and b not in (9, 10, 13) for b in value):  # 非打印字符
-                return f"0x{value.hex()}"
-            else:
-                # 4. 尝试 Latin-1 解码（不会失败）
-                return value.decode('latin-1')
+            pass
+
+        # 3. GBK / CP936 / GB18030 — common for SQL Server Chinese text.
+        #    These are multi-byte encodings; a successful decode doesn't
+        #    guarantee correctness, so use a CJK character-range heuristic.
+        for enc in ("gbk", "gb2312", "cp936", "gb18030"):
+            try:
+                decoded = value.decode(enc)
+                # Heuristic: if the decoded string contains CJK chars
+                # (U+4E00–U+9FFF or U+3000–U+303F), the encoding is
+                # almost certainly correct.
+                if any('一' <= c <= '鿿' or '　' <= c <= '〿'
+                       for c in decoded):
+                    return decoded
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+
+        # 4. 如果包含非打印字符，返回十六进制
+        if any(b < 32 and b not in (9, 10, 13) for b in value):  # 非打印字符
+            return f"0x{value.hex()}"
+
+        # 5. 最后的回退 — Latin-1 解码（每个字节 → 一个字符，不会失败）
+        #    For non-CJK text this is harmless; for CJK it produces mojibake
+        #    but preserves the byte values for debugging.
+        return value.decode('latin-1')
 
     elif isinstance(value, bytearray):
         # 处理 bytearray
@@ -745,13 +791,8 @@ def check_sql_read(sql: str, ds: CoreDatasource | AssistantOutDsSchema):
         if first_keyword in denied_write_commands:
             return False, f"禁止的 SQL 操作「{first_keyword}」。SQLBot 仅支持数据查询（SELECT / WITH），不支持增删改操作。"
 
-        dialect = None
-        if equals_ignore_case(ds.type, 'mysql', 'doris', 'starrocks'):
-            dialect = 'mysql'
-        elif equals_ignore_case(ds.type, 'sqlServer'):
-            dialect = 'tsql'
-        elif equals_ignore_case(ds.type, 'hive'):
-            dialect = 'hive'
+        from apps.db.dialect import get_dialect
+        dialect = get_dialect(ds.type).sqlglot_dialect
 
         statements = sqlglot.parse(sql, dialect=dialect)
 
