@@ -1,24 +1,14 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Any, Union
+from typing import List, Optional
 
 from fastapi import Body
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pydantic import BaseModel
-from sqlalchemy import Column, Integer, Text, BigInteger, DateTime, Identity, Boolean
+from sqlalchemy import Column, Integer, Text, BigInteger, DateTime, Identity, Boolean, JSON
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import SQLModel, Field
 
-from apps.db.constant import DB
-from apps.template.filter.generator import get_permissions_template
-from apps.template.generate_analysis.generator import get_analysis_template
-from apps.template.generate_chart.generator import get_chart_template
-from apps.template.generate_dynamic.generator import get_dynamic_template
-from apps.template.generate_guess_question.generator import get_guess_question_template
-from apps.template.generate_predict.generator import get_predict_template
-from apps.template.generate_sql.generator import get_sql_template, get_sql_example_template
-from apps.template.select_datasource.generator import get_datasource_template
 
 
 def enum_values(enum_class: type[Enum]) -> list:
@@ -98,6 +88,7 @@ class Chat(SQLModel, table=True):
     recommended_question_answer: str = Field(sa_column=Column(Text, nullable=True))
     recommended_question: str = Field(sa_column=Column(Text, nullable=True))
     recommended_generate: bool = Field(default=False)
+    memory_state: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
 
 
 class ChatRecord(SQLModel, table=True):
@@ -121,6 +112,7 @@ class ChatRecord(SQLModel, table=True):
     analysis: str = Field(sa_column=Column(Text, nullable=True))
     predict: str = Field(sa_column=Column(Text, nullable=True))
     predict_data: str = Field(sa_column=Column(Text, nullable=True))
+    execution_log: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
     recommended_question_answer: str = Field(sa_column=Column(Text, nullable=True))
     recommended_question: str = Field(sa_column=Column(Text, nullable=True))
     datasource_select_answer: str = Field(sa_column=Column(Text, nullable=True))
@@ -129,6 +121,7 @@ class ChatRecord(SQLModel, table=True):
     analysis_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
     predict_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
     regenerate_record_id: int = Field(sa_column=Column(BigInteger, nullable=True))
+    execution_log: Optional[dict] = Field(sa_column=Column(JSON, nullable=True))
 
 
 class ChatRecordResult(BaseModel):
@@ -148,6 +141,7 @@ class ChatRecordResult(BaseModel):
     analysis: Optional[str] = None
     predict: Optional[str] = None
     predict_data: Optional[str] = None
+    execution_log: Optional[dict] = None
     recommended_question: Optional[str] = None
     datasource_select_answer: Optional[str] = None
     finish: Optional[bool] = None
@@ -161,6 +155,7 @@ class ChatRecordResult(BaseModel):
     predict_reasoning_content: Optional[str] = None
     duration: Optional[float] = None  # 耗时字段（单位：秒）
     total_tokens: Optional[int] = None  # token总消耗
+    execution_log: Optional[dict] = None
 
 
 class CreateChat(BaseModel):
@@ -232,107 +227,6 @@ class AiModelQuestion(BaseModel):
     sample_data: str = ""
     sqlbot_name: str = "SQLBot"
 
-    def sql_sys_question(self, db_type: Union[str, DB], enable_query_limit: bool = True):
-        templates: dict[str, str] = {}
-        _sql_template = get_sql_example_template(db_type)
-        _base_template = get_sql_template()
-        _process_check = _sql_template.get('process_check') if _sql_template.get('process_check') else _base_template[
-            'process_check']
-        _query_limit = _base_template['query_limit'] if enable_query_limit else _base_template['no_query_limit']
-        _other_rule = _sql_template['other_rule'].format(multi_table_condition=_base_template['multi_table_condition'])
-        _base_sql_rules = _sql_template['quot_rule'] + _query_limit + _sql_template['limit_rule'] + _other_rule
-        _sql_examples = _sql_template['basic_example']
-        _example_engine = _sql_template['example_engine']
-        _example_answer_1 = _sql_template['example_answer_1_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_1']
-        _example_answer_2 = _sql_template['example_answer_2_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_2']
-        _example_answer_3 = _sql_template['example_answer_3_with_limit'] if enable_query_limit else _sql_template[
-            'example_answer_3']
-
-        templates['system'] = _base_template['system'].format(lang=self.lang, process_check=_process_check, sqlbot_name=self.sqlbot_name)
-        templates['rules'] = _base_template['generate_rules'].format(lang=self.lang,
-                                                                     sqlbot_name = self.sqlbot_name,
-                                                                     base_sql_rules=_base_sql_rules,
-                                                                     basic_sql_examples=_sql_examples,
-                                                                     example_engine=_example_engine,
-                                                                     example_answer_1=_example_answer_1,
-                                                                     example_answer_2=_example_answer_2,
-                                                                     example_answer_3=_example_answer_3)
-        templates['schema'] = _base_template['generate_basic_info'].format(engine=self.engine, schema=self.db_schema, sample_data=self.sample_data)
-
-        if self.terminologies:
-            templates['terminologies'] = _base_template['generate_terminologies_info'].format(
-                terminologies=self.terminologies)
-
-        if self.data_training:
-            templates['data_training'] = _base_template['generate_data_training_info'].format(
-                data_training=self.data_training)
-
-        if self.custom_prompt:
-            templates['custom_prompt'] = _base_template['generate_custom_prompt_info'].format(
-                custom_prompt=self.custom_prompt)
-
-        return templates
-
-    def sql_user_question(self, current_time: str, change_title: bool):
-        _question = self.question
-        if self.regenerate_record_id:
-            _question = get_sql_template()['regenerate_hint'] + self.question
-        return get_sql_template()['user'].format(lang=self.lang, engine=self.engine, schema=self.db_schema,
-                                                 question=_question,
-                                                 rule=self.rule, current_time=current_time, error_msg=self.error_msg,
-                                                 change_title=change_title)
-
-    def chart_sys_question(self):
-        templates: dict[str, str] = {
-            'system': get_chart_template()['system'].format(lang=self.lang, sqlbot_name=self.sqlbot_name),
-            'rules': get_chart_template()['generate_rules'].format(lang=self.lang)
-        }
-        return templates
-
-    def chart_user_question(self, chart_type: Optional[str] = '', schema: Optional[str] = ''):
-        return get_chart_template()['user'].format(lang=self.lang, sql=self.sql, question=self.question, rule=self.rule,
-                                                   chart_type=chart_type, schema=schema)
-
-    def analysis_sys_question(self):
-        return get_analysis_template()['system'].format(lang=self.lang, terminologies=self.terminologies,
-                                                        custom_prompt=self.custom_prompt, sqlbot_name=self.sqlbot_name)
-
-    def analysis_user_question(self):
-        return get_analysis_template()['user'].format(fields=self.fields, data=self.data)
-
-    def predict_sys_question(self):
-        return get_predict_template()['system'].format(lang=self.lang, custom_prompt=self.custom_prompt, sqlbot_name=self.sqlbot_name)
-
-    def predict_user_question(self):
-        return get_predict_template()['user'].format(fields=self.fields, data=self.data)
-
-    def datasource_sys_question(self):
-        return get_datasource_template()['system'].format(lang=self.lang, sqlbot_name=self.sqlbot_name)
-
-    def datasource_user_question(self, datasource_list: str = "[]"):
-        return get_datasource_template()['user'].format(lang=self.lang, question=self.question, data=datasource_list)
-
-    def guess_sys_question(self, articles_number: int = 4):
-        return get_guess_question_template()['system'].format(lang=self.lang, articles_number=articles_number, sqlbot_name=self.sqlbot_name)
-
-    def guess_user_question(self, old_questions: str = "[]"):
-        return get_guess_question_template()['user'].format(question=self.question, schema=self.db_schema,
-                                                            old_questions=old_questions)
-
-    def filter_sys_question(self):
-        return get_permissions_template()['system'].format(lang=self.lang, engine=self.engine, sqlbot_name=self.sqlbot_name)
-
-    def filter_user_question(self):
-        return get_permissions_template()['user'].format(sql=self.sql, filter=self.filter)
-
-    def dynamic_sys_question(self):
-        return get_dynamic_template()['system'].format(lang=self.lang, engine=self.engine, sqlbot_name=self.sqlbot_name)
-
-    def dynamic_user_question(self):
-        return get_dynamic_template()['user'].format(sql=self.sql, sub_query=self.sub_query)
-
 
 class ChatQuestion(AiModelQuestion):
     chat_id: int
@@ -384,28 +278,3 @@ class McpAssistant(BaseModel):
     stream: Optional[bool] = Body(description='是否流式输出，默认为true开启, 关闭false则返回JSON对象', default=True)
 
 
-class SystemPromptMessage(SystemMessage):
-    sqlbot_system: bool = True
-
-    def __init__(
-            self, content: Union[str, list[Union[str, dict]]], **kwargs: Any
-    ) -> None:
-        super().__init__(content=content, **kwargs)
-
-
-class HumanPromptMessage(HumanMessage):
-    sqlbot_system: bool = True
-
-    def __init__(
-            self, content: Union[str, list[Union[str, dict]]], **kwargs: Any
-    ) -> None:
-        super().__init__(content=content, **kwargs)
-
-
-class AIPromptMessage(AIMessage):
-    sqlbot_system: bool = True
-
-    def __init__(
-            self, content: Union[str, list[Union[str, dict]]], **kwargs: Any
-    ) -> None:
-        super().__init__(content=content, **kwargs)

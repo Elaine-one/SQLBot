@@ -4,7 +4,7 @@
       class="main-menu"
       :class="{ 'main-menu-sidebar': !topLayout, 'main-menu-topbar': topLayout }"
     >
-      <div class="logo">SQLBot</div>
+      <div class="logo">{{ chatConfig.getSQLBotName || 'SQLBot' }}</div>
 
       <!-- <div v-if="!topLayout || !showSubmenu"
            :class="{ 'workspace-area': !topLayout, 'topbar-workspace-area': topLayout }">
@@ -174,7 +174,9 @@ import { useCache } from '@/utils/useCache'
 import { useI18n } from 'vue-i18n'
 import LanguageSelector from '@/components/Language-selector/index.vue'
 import AboutDialog from '@/components/about/index.vue'
+import { useChatConfigStore } from '@/stores/chatConfig.ts'
 
+const chatConfig = useChatConfigStore()
 const aboutRef = ref()
 const { t } = useI18n()
 const { wsCache } = useCache()

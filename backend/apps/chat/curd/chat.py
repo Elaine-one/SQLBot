@@ -342,6 +342,7 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
                    ChatRecord.regenerate_record_id,
                    ChatRecord.recommended_question, ChatRecord.first_chat,
                    ChatRecord.finish, ChatRecord.error,
+                   ChatRecord.execution_log,
                    sql_alias_log.reasoning_content.label('sql_reasoning_content'),
                    chart_alias_log.reasoning_content.label('chart_reasoning_content'),
                    analysis_alias_log.reasoning_content.label('analysis_reasoning_content'),
@@ -368,7 +369,9 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
                       ChatRecord.datasource_select_answer, ChatRecord.analysis_record_id, ChatRecord.predict_record_id,
                       ChatRecord.regenerate_record_id,
                       ChatRecord.recommended_question, ChatRecord.first_chat,
-                      ChatRecord.finish, ChatRecord.error, ChatRecord.data, ChatRecord.predict_data).where(
+                      ChatRecord.finish, ChatRecord.error,
+                      ChatRecord.execution_log,
+                      ChatRecord.data, ChatRecord.predict_data).where(
             and_(ChatRecord.create_by == current_user.id, ChatRecord.chat_id == chart_id)).order_by(
             ChatRecord.create_time)
 
@@ -441,6 +444,7 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
                                  chart_reasoning_content=row.chart_reasoning_content,
                                  analysis_reasoning_content=row.analysis_reasoning_content,
                                  predict_reasoning_content=row.predict_reasoning_content,
+                                 execution_log=row.execution_log,
                                  ))
         else:
             record_list.append(
@@ -455,7 +459,9 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
                                  analysis_record_id=row.analysis_record_id, predict_record_id=row.predict_record_id,
                                  regenerate_record_id=row.regenerate_record_id,
                                  recommended_question=row.recommended_question, first_chat=row.first_chat,
-                                 finish=row.finish, error=row.error, data=row.data, predict_data=row.predict_data))
+                                 finish=row.finish, error=row.error,
+                                 execution_log=row.execution_log,
+                                 data=row.data, predict_data=row.predict_data))
 
     result = list(map(format_record, record_list))
 
@@ -475,12 +481,20 @@ def get_chat_with_records(session: SessionDep, chart_id: int, current_user: Curr
 def format_record(record: ChatRecordResult):
     _dict = record.model_dump()
 
+    # sql_answer: new format is JSON {"content":"...", "reasoning_content":"..."}
+    # old format is plain text (possibly with ❓ markers).  Handle both.
     if record.sql_answer and record.sql_answer.strip() != '' and record.sql_answer.strip()[0] == '{' and \
             record.sql_answer.strip()[-1] == '}':
-        _obj = orjson.loads(record.sql_answer)
-        _dict['sql_answer'] = _obj.get('reasoning_content')
+        try:
+            _obj = orjson.loads(record.sql_answer)
+            if isinstance(_obj, dict) and 'content' in _obj:
+                _dict['sql_answer'] = _obj.get('content', record.sql_answer)
+                _dict['sql_reasoning_content'] = _obj.get('reasoning_content', '') or _dict.get('sql_reasoning_content', '')
+        except Exception:
+            pass  # not valid JSON, keep original
+    # ChatLog join may also provide reasoning (takes precedence if non-empty)
     if record.sql_reasoning_content and record.sql_reasoning_content.strip() != '':
-        _dict['sql_answer'] = record.sql_reasoning_content
+        _dict['sql_reasoning_content'] = record.sql_reasoning_content
     if record.chart_answer and record.chart_answer.strip() != '' and record.chart_answer.strip()[0] == '{' and \
             record.chart_answer.strip()[-1] == '}':
         _obj = orjson.loads(record.chart_answer)
@@ -814,8 +828,8 @@ def save_analysis_predict_record(session: SessionDep, base_record: ChatRecord, a
     record.ai_modal_id = base_record.ai_modal_id
     record.create_time = datetime.datetime.now()
     record.create_by = base_record.create_by
-    record.chart = base_record.chart
     record.data = base_record.data
+    # chart is NOT copied — analysis/predict generates its own chart via _generate_chart()
 
     if action_type == 'analysis':
         record.analysis_record_id = base_record.id

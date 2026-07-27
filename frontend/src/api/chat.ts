@@ -45,6 +45,7 @@ export class ChatRecord {
   chart?: string
   analysis?: string
   analysis_thinking?: string
+  sql_reasoning_content?: string
   predict?: string
   predict_content?: string
   predict_data?: string | any
@@ -58,6 +59,13 @@ export class ChatRecord {
   regenerate_record_id?: number
   duration?: number
   total_tokens?: number
+  execution_log?: Record<string, any> | null
+  tool_calls_log?: Array<{
+    tool: string
+    args: any
+    result?: string
+    time: Date
+  }>
 
   constructor()
   constructor(
@@ -74,6 +82,7 @@ export class ChatRecord {
     chart: string | undefined,
     analysis: string | undefined,
     analysis_thinking: string | undefined,
+    sql_reasoning_content: string | undefined,
     predict: string | undefined,
     predict_content: string | undefined,
     predict_data: string | any | undefined,
@@ -102,6 +111,7 @@ export class ChatRecord {
     chart?: string,
     analysis?: string,
     analysis_thinking?: string,
+    sql_reasoning_content?: string,
     predict?: string,
     predict_content?: string,
     predict_data?: string | any,
@@ -129,6 +139,7 @@ export class ChatRecord {
     this.chart = chart
     this.analysis = analysis
     this.analysis_thinking = analysis_thinking
+    this.sql_reasoning_content = sql_reasoning_content
     this.predict = predict
     this.predict_content = predict_content
     this.predict_data = predict_data
@@ -259,7 +270,7 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
   if (!data) {
     return undefined
   }
-  return new ChatRecord(
+  const record = new ChatRecord(
     data.id,
     data.chat_id,
     data.create_time,
@@ -273,6 +284,7 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
     data.chart,
     data.analysis,
     data.analysis_thinking,
+    data.sql_reasoning_content,
     data.predict,
     data.predict_content,
     data.predict_data,
@@ -287,6 +299,10 @@ const toChatRecord = (data?: any): ChatRecord | undefined => {
     data.duration,
     data.total_tokens
   )
+  if (data.execution_log) {
+    record.execution_log = data.execution_log
+  }
+  return record
 }
 const toChatRecordList = (list: any = []): ChatRecord[] => {
   const records: Array<ChatRecord> = []
@@ -309,6 +325,7 @@ export class ChatLogHistoryItem {
   local_operation?: boolean | undefined
   error?: boolean | undefined
   message?: any
+  item?: any
 
   constructor()
   constructor(

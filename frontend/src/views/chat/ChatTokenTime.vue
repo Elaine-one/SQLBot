@@ -7,12 +7,13 @@ const props = defineProps<{
   recordId?: number
   duration?: number | undefined
   totalTokens?: number | undefined
+  executionLog?: Record<string, any> | null
 }>()
 const chatConfig = useChatConfigStore()
 const showLogBtn = chatConfig.getShowLog
 const executionDetailsRef = ref()
 function getLogList() {
-  executionDetailsRef.value.getLogList(props.recordId)
+  executionDetailsRef.value.getLogList(props.recordId, props.executionLog)
 }
 </script>
 

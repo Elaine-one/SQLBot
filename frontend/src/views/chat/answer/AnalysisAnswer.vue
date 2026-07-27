@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import BaseAnswer from './BaseAnswer.vue'
 import { chatApi, ChatInfo, type ChatMessage, ChatRecord } from '@/api/chat.ts'
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
+import ChartBlock from '@/views/chat/chat-block/ChartBlock.vue'
 const props = withDefaults(
   defineProps<{
     chatList?: Array<ChatInfo>
@@ -77,9 +78,30 @@ const _loading = computed({
 })
 
 const stopFlag = ref(false)
+
+const streamState = reactive<Record<string, any>>({})
+
+// Resolve analysis content from either SSE-populated analysis (live)
+// or DB-persisted analysis field (JSON: {"content":"...","reasoning_content":"..."})
+const analysisContent = computed(() => {
+  const record = props.message?.record
+  if (!record) return ''
+  const val = record.analysis
+  if (!val) return ''
+  // Try JSON parse (DB-loaded format)
+  try {
+    const parsed = typeof val === 'string' ? JSON.parse(val) : val
+    if (parsed?.content) return parsed.content
+  } catch {}
+  // Plain text (live SSE or legacy)
+  return val
+})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
+  Object.keys(streamState).forEach(k => delete streamState[k])
+  let hasNativeReasoning = false
 
   if (index.value < 0) {
     _loading.value = false
@@ -93,6 +115,11 @@ const sendMessage = async () => {
     error = true
   }
   if (error) return
+
+  // Init tool_calls_log for thinking display
+  if (!currentRecord.tool_calls_log) {
+    currentRecord.tool_calls_log = []
+  }
 
   try {
     const controller: AbortController = new AbortController()
@@ -160,13 +187,61 @@ const sendMessage = async () => {
                 currentRecord.error = data.content
                 emits('error', currentRecord.id)
                 break
-              case 'analysis-result':
-                analysis_answer += data.content
-                analysis_answer_thinking += data.reasoning_content
-                _currentChat.value.records[index.value].analysis = analysis_answer
-                _currentChat.value.records[index.value].analysis_thinking = analysis_answer_thinking
+              case 'reasoning':
+                hasNativeReasoning = true
+                analysis_answer_thinking += data.content
+                streamState.analysis_thinking = analysis_answer_thinking
                 break
-              case 'analysis_finish':
+              case 'clarify':
+                if (data.content) {
+                  streamState.clarify_question = data.content
+                }
+                break
+              case 'text-delta':
+                analysis_answer += data.content
+                _currentChat.value.records[index.value].analysis = analysis_answer
+                // Fallback：非推理模型用 text-delta 作为思考内容
+                if (!hasNativeReasoning && data.content) {
+                  streamState.analysis_thinking = (streamState.analysis_thinking || '') + data.content
+                }
+                break
+              case 'tool-call':
+                currentRecord.tool_calls_log.push({
+                  tool: data.tool_name,
+                  args: data.args,
+                  time: new Date(),
+                })
+                break
+              case 'tool-result':
+                if (currentRecord.tool_calls_log.length > 0) {
+                  const last = currentRecord.tool_calls_log[currentRecord.tool_calls_log.length - 1]
+                  last.result = data.summary || (data.success ? 'success' : 'failed')
+                }
+                break
+              case 'chart':
+                // Fetch data FIRST, then set chart — so DisplayChartBlock
+                // sees data?.length > 0 when it mounts
+                if (currentRecord.id) {
+                  chatApi.get_chart_data(currentRecord.id).then((response) => {
+                    if (response) {
+                      currentRecord.data = response
+                      console.log('[AnalysisAnswer] chart data loaded:', currentRecord.id)
+                    }
+                    // Set chart AFTER data, so DisplayChartBlock renders correctly
+                    currentRecord.chart = data.content
+                  }).catch(() => {
+                    currentRecord.chart = data.content  // fallback: set chart even if data fails
+                  })
+                } else {
+                  currentRecord.chart = data.content
+                }
+                break
+              case 'execution-stats':
+                try {
+                  _currentChat.value.records[index.value].execution_log = JSON.parse(data.content)
+                } catch (e) { /* ignore */ }
+                break
+              case 'finish':
                 emits('finish', currentRecord.id)
                 break
             }
@@ -198,6 +273,24 @@ function stop() {
 onBeforeUnmount(() => {
   stop()
 })
+onMounted(() => {
+  const rid = props.message?.record?.id
+  const hasChart = props.message?.record?.chart
+  console.log('[AnalysisAnswer] onMounted recordId:', rid, 'finish:', props.message?.record?.finish, 'hasChart:', !!hasChart)
+  if (rid && hasChart) {
+    chatApi.get_chart_data(rid).then((response) => {
+      console.log('[AnalysisAnswer] getChatData success recordId:', rid, 'hasData:', !!response)
+      _currentChat.value.records.forEach((record) => {
+        if (record.id === rid) {
+          record.data = response
+        }
+      })
+    }).catch((e) => {
+      console.error('[AnalysisAnswer] getChatData failed:', rid, e)
+    })
+  }
+})
+
 defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList.value, stop })
 </script>
 
@@ -207,8 +300,15 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList.
     :message="message"
     :reasoning-name="['analysis_thinking']"
     :loading="_loading"
+    :streaming-state="streamState"
   >
-    <MdComponent :message="message.record?.analysis" style="margin-top: 12px" />
+    <MdComponent :message="analysisContent" style="margin-top: 12px" />
+    <ChartBlock
+      v-if="message.record?.chart"
+      style="margin-top: 12px"
+      :record-id="message.record?.id"
+      :message="message"
+    />
     <slot></slot>
     <template #tool>
       <slot name="tool"></slot>

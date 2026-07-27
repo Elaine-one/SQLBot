@@ -10,8 +10,8 @@ const { t } = useI18n()
 const state = reactive({
   parameterForm: reactive<any>({
     'chat.sqlbot_name': 'SQLBot',
-    'chat.expand_thinking_block': false,
-    'chat.limit_rows': false,
+    'chat.expand_thinking_block': true,
+    'chat.limit_rows': true,
     'chat.show_sql': false,
     'chat.show_log': false,
   }),

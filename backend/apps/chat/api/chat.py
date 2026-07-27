@@ -34,6 +34,13 @@ async def chats(session: SessionDep, current_user: CurrentUser):
     return list_chats(session, current_user)
 
 
+@router.get("/chart-types", summary=f"{PLACEHOLDER_PREFIX}get_chart_types")
+def get_chart_types(lang: str = "zh-CN"):
+    """返回全部已注册图表类型的完整配置。TokenMiddleware 已处理鉴权。"""
+    from apps.chat.agent.chart_registry import get_frontend_config
+    return get_frontend_config(lang)
+
+
 @router.get("/{chart_id}", response_model=ChatInfo, summary=f"{PLACEHOLDER_PREFIX}get_chat")
 async def get_chat(session: SessionDep, current_user: CurrentUser, chart_id: int, current_assistant: CurrentAssistant,
                    trans: Trans):
@@ -220,30 +227,28 @@ async def start_chat(session: SessionDep, current_user: CurrentUser, current_ass
 @router.post("/recommend_questions/{chat_record_id}", summary=f"{PLACEHOLDER_PREFIX}ask_recommend_questions")
 async def ask_recommend_questions(session: SessionDep, current_user: CurrentUser, chat_record_id: int,
                                   current_assistant: CurrentAssistant, articles_number: Optional[int] = 4):
+    """Generate recommended follow-up questions using the Agent engine."""
     def _return_empty():
         yield 'data:' + orjson.dumps({'content': '[]', 'type': 'recommended_question'}).decode() + '\n\n'
 
     try:
         record = get_chat_record_by_id(session, chat_record_id)
-
         if not record:
             return StreamingResponse(_return_empty(), media_type="text/event-stream")
 
         request_question = ChatQuestion(chat_id=record.chat_id, question=record.question if record.question else '')
 
+        from apps.chat.agent.adapter import stream_agent_recommend
         llm_service = await LLMService.create(session, current_user, request_question, current_assistant, True)
-        llm_service.set_record(record)
-        llm_service.set_articles_number(articles_number)
-        llm_service.run_recommend_questions_task_async()
+        return StreamingResponse(
+            stream_agent_recommend(llm_service, session, articles_number),
+            media_type="text/event-stream",
+        )
     except Exception as e:
         traceback.print_exc()
-
         def _err(_e: Exception):
             yield 'data:' + orjson.dumps({'content': str(_e), 'type': 'error'}).decode() + '\n\n'
-
         return StreamingResponse(_err(e), media_type="text/event-stream")
-
-    return StreamingResponse(llm_service.await_result(), media_type="text/event-stream")
 
 
 @router.get("/recent_questions/{datasource_id}", response_model=List[str],
@@ -371,40 +376,42 @@ async def stream_sql(session: SessionDep, current_user: CurrentUser, request_que
                      current_assistant: Optional[CurrentAssistant] = None, in_chat: bool = True, stream: bool = True,
                      finish_step: ChatFinishStep = ChatFinishStep.GENERATE_CHART, embedding: bool = False,
                      return_img: bool = True):
+    """Execute the SQLBot Agent engine and stream SSE events."""
+    from apps.chat.agent.adapter import stream_agent
+
     try:
-        llm_service = await LLMService.create(session, current_user, request_question, current_assistant,
-                                              embedding=embedding)
+        # Reuse LLMService.create() for datasource resolution and config
+        llm_service = await LLMService.create(session, current_user, request_question,
+                                              current_assistant, embedding=embedding)
         llm_service.init_record(session=session)
-        llm_service.run_task_async(in_chat=in_chat, stream=stream, finish_step=finish_step, return_img=return_img)
     except Exception as e:
         traceback.print_exc()
-
         if stream:
             def _err(_e: Exception):
                 yield 'data:' + orjson.dumps({'content': str(_e), 'type': 'error'}).decode() + '\n\n'
-
             return StreamingResponse(_err(e), media_type="text/event-stream")
         else:
-            return JSONResponse(
-                content={'message': str(e)},
-                status_code=500,
-            )
-    if stream:
-        return StreamingResponse(llm_service.await_result(), media_type="text/event-stream")
-    else:
-        res = llm_service.await_result()
-        raw_data = {}
-        for chunk in res:
-            if chunk:
-                raw_data = chunk
-        status_code = 200
-        if not raw_data.get('success'):
-            status_code = 500
+            return JSONResponse(content={'message': str(e)}, status_code=500)
 
-        return JSONResponse(
-            content=raw_data,
-            status_code=status_code,
-        )
+    question = request_question.question or ""
+
+    # Detect follow-up: a chat with prior non-first records is a follow-up
+    is_followup = False
+    chat_id = request_question.chat_id
+    if chat_id:
+        from apps.chat.models.chat_model import ChatRecord
+        from sqlalchemy import and_, select, func
+        count = session.exec(
+            select(func.count(ChatRecord.id)).where(
+                and_(ChatRecord.chat_id == chat_id, ChatRecord.first_chat == False)
+            )
+        ).scalar()
+        is_followup = (count or 0) > 0
+
+    return StreamingResponse(
+        stream_agent(llm_service, session, question, is_followup=is_followup),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/record/{chat_record_id}/{action_type}", summary=f"{PLACEHOLDER_PREFIX}analysis_or_predict")
@@ -417,33 +424,63 @@ async def analysis_or_predict_question(session: SessionDep, current_user: Curren
 
 async def analysis_or_predict(session: SessionDep, current_user: CurrentUser, chat_record_id: int, action_type: str,
                               current_assistant: CurrentAssistant, in_chat: bool = True, stream: bool = True):
+    """Run analysis or prediction via the Agent engine (migrated from old pipeline).
+
+    Creates a new ChatRecord linked to the base record, builds an
+    analysis/predict AgentProfile, and dispatches through the same
+    Agent infrastructure used by main Q&A.
+    """
     try:
         if action_type != 'analysis' and action_type != 'predict':
             raise Exception(f"Type {action_type} Not Found")
-        record: ChatRecord | None = None
 
+        # ── 1. Fetch base record from DB ──
+        record: ChatRecord | None = None
         stmt = select(ChatRecord.id, ChatRecord.question, ChatRecord.chat_id, ChatRecord.datasource,
                       ChatRecord.engine_type,
-                      ChatRecord.ai_modal_id, ChatRecord.create_by, ChatRecord.chart, ChatRecord.data).where(
+                      ChatRecord.ai_modal_id, ChatRecord.create_by, ChatRecord.chart, ChatRecord.data,
+                      ChatRecord.sql).where(
             and_(ChatRecord.id == chat_record_id))
         result = session.execute(stmt)
         for r in result:
             record = ChatRecord(id=r.id, question=r.question, chat_id=r.chat_id, datasource=r.datasource,
                                 engine_type=r.engine_type, ai_modal_id=r.ai_modal_id, create_by=r.create_by,
-                                chart=r.chart,
-                                data=r.data)
+                                chart=r.chart, data=r.data, sql=r.sql)
 
         if not record:
             raise Exception(f"Chat record with id {chat_record_id} not found")
-
         if not record.chart:
             raise Exception(
-                f"Chat record with id {chat_record_id} has not generated chart, do not support to analyze it")
+                f"Chat record with id {chat_record_id} has not generated chart, "
+                f"do not support to analyze it")
 
+        # ── 2. Create child record for analysis/predict result ──
+        from apps.chat.curd.chat import save_analysis_predict_record
+        analysis_record = save_analysis_predict_record(session, record, action_type)
+
+        # ── 3. Create LLMService (reuses datasource resolution) ──
         request_question = ChatQuestion(chat_id=record.chat_id, question=record.question)
-
         llm_service = await LLMService.create(session, current_user, request_question, current_assistant)
-        llm_service.run_analysis_or_predict_task_async(session, action_type, record, in_chat, stream)
+        llm_service.set_record(analysis_record)
+
+        # ── 4. Build Agent profile ──
+        from apps.chat.agent.engine import (
+            dispatch,
+            build_analysis_profile,
+            build_predict_profile,
+        )
+        if action_type == "analysis":
+            profile = build_analysis_profile(record)
+        else:
+            profile = build_predict_profile(record)
+
+        # ── 5. Run agent dispatch ──
+        return StreamingResponse(
+            dispatch(profile, llm_service, session,
+                     question=record.question or "", base_record=record),
+            media_type="text/event-stream",
+        )
+
     except Exception as e:
         traceback.print_exc()
         if stream:
@@ -460,22 +497,7 @@ async def analysis_or_predict(session: SessionDep, current_user: CurrentUser, ch
                 content={'message': str(e)},
                 status_code=500,
             )
-    if stream:
-        return StreamingResponse(llm_service.await_result(), media_type="text/event-stream")
-    else:
-        res = llm_service.await_result()
-        raw_data = {}
-        for chunk in res:
-            if chunk:
-                raw_data = chunk
-        status_code = 200
-        if not raw_data.get('success'):
-            status_code = 500
 
-        return JSONResponse(
-            content=raw_data,
-            status_code=status_code,
-        )
 
 
 @router.get("/record/{chat_record_id}/excel/export/{chat_id}", summary=f"{PLACEHOLDER_PREFIX}export_chart_data")

@@ -1,6 +1,8 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import DatasourceCard from './DatasourceCard.vue'
+import { useChatConfigStore } from '@/stores/chatConfig'
+const chatConfig = useChatConfigStore()
 interface Datasource {
   id?: string
   name: string
@@ -28,7 +30,7 @@ const dialogVisible = ref(false)
 
 <template>
   <div class="chat-init_tip">
-    <div class="hello-sqlbot">Hello, I'm SQLBot, happy to serve you!</div>
+    <div class="hello-sqlbot">Hello, I'm {{ chatConfig.getSQLBotName }}, happy to serve you!</div>
     <div class="function-sqlbot">
       I can help you query data, generate charts, detect data anomalies, predict data, etc. Please
       select a data source and start intelligent data query~

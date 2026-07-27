@@ -1,0 +1,8 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="2" width="4" height="3" rx="0.5" fill="currentColor"/>
+  <text x="7" y="4.5" font-size="3" fill="currentColor" font-family="system-ui">ABC</text>
+  <circle cx="3" cy="8" r="1.5" fill="currentColor"/>
+  <text x="7" y="9" font-size="3" fill="currentColor" font-family="system-ui">DEF</text>
+  <line x1="1" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1.5"/>
+  <text x="7" y="13" font-size="3" fill="currentColor" font-family="system-ui">GHI</text>
+</svg>

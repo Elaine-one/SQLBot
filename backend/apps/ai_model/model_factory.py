@@ -97,13 +97,14 @@ class OpenAIAzureLLM(BaseLLM):
 
 class OpenAILLM(BaseLLM):
     def _init_llm(self) -> BaseChatModel:
-        return BaseChatOpenAI(
-            model=self.config.model_name,
-            api_key=self.config.api_key or 'Empty',
-            base_url=self.config.api_base_url,
-            stream_usage=True,
-            **self.config.additional_params,
-        )
+        params: dict[str, Any] = {
+            "model": self.config.model_name,
+            "api_key": self.config.api_key or "Empty",
+            "base_url": self.config.api_base_url,
+            "stream_usage": True,
+        }
+        params.update(self.config.additional_params)
+        return BaseChatOpenAI(**params)
 
     def generate(self, prompt: str) -> str:
         return self.llm.invoke(prompt)

@@ -109,11 +109,7 @@ class Settings(BaseSettings):
 
     # 是否启用SQL查询行数限制，默认值，可被参数配置覆盖
     GENERATE_SQL_QUERY_LIMIT_ENABLED: bool = True
-    GENERATE_SQL_QUERY_HISTORY_ROUND_COUNT: int = 3
-
-    PARSE_REASONING_BLOCK_ENABLED: bool = True
-    DEFAULT_REASONING_CONTENT_START: str = '<think>'
-    DEFAULT_REASONING_CONTENT_END: str = '</think>'
+    GENERATE_SQL_QUERY_HISTORY_ROUND_COUNT: int = 5
 
     PG_POOL_SIZE: int = 20
     PG_MAX_OVERFLOW: int = 30
@@ -126,10 +122,13 @@ class Settings(BaseSettings):
 
     ORACLE_CLIENT_PATH: str = '/opt/sqlbot/db_client/oracle_instant_client'
 
+    # ── Bing Web Search (Lite scraping, no API key) ───
+    BING_SEARCH_TIMEOUT: int = 10  # seconds per request
+    BING_SEARCH_MAX_RESULTS: int = 5
+
     @field_validator('SQL_DEBUG',
                      'EMBEDDING_ENABLED',
                      'GENERATE_SQL_QUERY_LIMIT_ENABLED',
-                     'PARSE_REASONING_BLOCK_ENABLED',
                      'PG_POOL_PRE_PING',
                      'TABLE_EMBEDDING_ENABLED',
                      mode='before')

@@ -1,0 +1,424 @@
+{
+  "$schema": "chart_channel_knowledge/v1",
+  "description": "图表通道语义知识库——JSON 格式的 SSOT，同时用于 LLM Prompt 生成 + 前端 toRenderable 检查 + 自校正反馈",
+
+  "column_classifier": {
+    "description": "列类型分类规则——告诉 LLM 如何判断一个 SQL 输出列的语义角色",
+    "channel_types": {
+      "temporal": {
+        "label_cn": "时间/日期",
+        "label_en": "Temporal",
+        "match": {
+          "name_patterns": ["时间", "日期", "date", "time", "年", "月", "日", "timestamp", "datetime", "year", "month", "day"],
+          "value_patterns": ["2024-01-01", "2024/01/01"],
+          "sample_check": "≥50% 的值可被 Date.parse() 解析"
+        }
+      },
+      "metric": {
+        "label_cn": "数值/指标",
+        "label_en": "Metric",
+        "match": {
+          "name_patterns": [],
+          "sample_check": "≥80% 的非空值去掉 ,% 后可通过 Number() 转换"
+        },
+        "subtypes": {
+          "ratio": {
+            "label_cn": "比率/百分比（已有百分比含义）",
+            "label_en": "Ratio/Percentage",
+            "name_patterns": ["率", "%", "percent", "ratio", "占比", "份额", "百分比"],
+            "value_hint": "值域通常 [0, 100] 或 [0, 1]",
+            "danger": "饼图 theta 通道禁止使用"
+          },
+          "amount": {
+            "label_cn": "金额/数量",
+            "label_en": "Amount/Quantity",
+            "name_patterns": ["金额", "收入", "利润", "销量", "数量", "GMV", "成本", "revenue", "profit", "amount", "sales", "cost"],
+            "value_hint": "通常 ≥0，可能很大（千/万/亿）"
+          },
+          "count": {
+            "label_cn": "计数",
+            "label_en": "Count",
+            "name_patterns": ["人数", "次数", "订单数", "count", "uv", "pv"],
+            "value_hint": "正整数"
+          },
+          "delta": {
+            "label_cn": "差值/增减量",
+            "label_en": "Delta",
+            "name_patterns": ["增长", "下降", "变化", "差值", "change", "delta", "diff", "growth"],
+            "value_hint": "可正可负",
+            "danger_hint": "含负值时饼图 theta 通道禁止使用"
+          }
+        }
+      },
+      "categorical": {
+        "label_cn": "分类/离散",
+        "label_en": "Categorical",
+        "match": {
+          "sample_check": "<80% 的值可转为数字，且不是时间"
+        },
+        "subtypes": {
+          "ordinal": {
+            "label_cn": "有序分类",
+            "label_en": "Ordinal",
+            "name_patterns": ["阶段", "序号", "排名", "星级", "等级", "优先级", "order", "rank", "stage", "level", "grade", "tier"],
+            "suitable_for": "折线图 x 轴（与时间并列优先）"
+          },
+          "nominal": {
+            "label_cn": "无序分类",
+            "label_en": "Nominal",
+            "name_patterns": [],
+            "suitable_for": "柱状图/条形图 x 轴、饼图 color 通道（≤10 类）",
+            "danger_for": "折线图 x 轴（折线在无序类别间无意义）"
+          }
+        }
+      }
+    }
+  },
+
+  "chart_type_channels": {
+    "description": "每种图表类型对通道的硬性要求和最佳实践",
+    "table": {
+      "label_cn": "明细表",
+      "icon": "table",
+      "category": "data_view",
+      "intent_keywords_cn": ["明细", "列表", "查看", "原始数据", "具体数据"],
+      "uses_axis": false,
+      "channels": {},
+      "channel_mapping_rules": {
+        "description_cn": "表格不需要通道映射，直接输出所有列",
+        "output_format_cn": "columns 数组，每项 { name, value }"
+      },
+      "ssot": "后端最权威——表格总是安全兜底选项"
+    },
+    "column": {
+      "label_cn": "柱状图",
+      "icon": "column",
+      "category": "comparison",
+      "intent_keywords_cn": ["对比", "比较", "排名", "柱状", "柱形"],
+      "uses_axis": true,
+      "channels": {
+        "x": {
+          "label_cn": "X 轴（分类维度）",
+          "type": "dimension",
+          "required": true,
+          "forbidden_types": ["temporal"],
+          "preferred_types": ["categorical.nominal", "categorical.ordinal"],
+          "max_cardinality": 60,
+          "description_cn": "X 轴必须是业务分类维度（店铺/SKU/供应商等），禁止使用时间字段",
+          "example_cn": "平台名称、产品类别、地区、部门"
+        },
+        "y": {
+          "label_cn": "Y 轴（数值指标）",
+          "type": "metric",
+          "required": true,
+          "min": 1,
+          "max": 1,
+          "allow_subtypes": ["amount", "count", "ratio", "delta"],
+          "description_cn": "Y 轴为数值指标，若多指标无 series 则用 multi-quota"
+        },
+        "color": {
+          "label_cn": "颜色（分组）",
+          "type": "dimension",
+          "required": false,
+          "max_cardinality": 10,
+          "description_cn": "可选的第二维度（分组对比），唯一值 ≤10"
+        }
+      },
+      "channel_mapping_rules": {
+        "priority_order": ["y", "x", "color"],
+        "description_cn": "先确定 Y（数值），再选 X（分类，非时间），最后选 color（可选分组）"
+      },
+      "anti_patterns": [
+        "❌ 把时间列映射到 x 轴（应改用折线图）",
+        "❌ 把比率/百分比列映射到 x 轴（比率是指标不是维度）",
+        "❌ x 轴唯一值超过 60 个（标签重叠不可读）"
+      ]
+    },
+    "bar": {
+      "label_cn": "条形图",
+      "icon": "bar",
+      "category": "comparison",
+      "intent_keywords_cn": ["条形", "横向", "水平"],
+      "uses_axis": true,
+      "channels": {
+        "x": {
+          "label_cn": "X 轴（分类维度）",
+          "type": "dimension",
+          "required": true,
+          "forbidden_types": ["temporal"],
+          "preferred_types": ["categorical.nominal", "categorical.ordinal"],
+          "max_cardinality": 60,
+          "description_cn": "与柱状图相同，只是视觉旋转。长标签或类别多时优先用条形图"
+        },
+        "y": {
+          "label_cn": "Y 轴（数值指标）",
+          "type": "metric",
+          "required": true,
+          "min": 1,
+          "max": 1,
+          "allow_subtypes": ["amount", "count", "ratio", "delta"]
+        },
+        "color": {
+          "label_cn": "颜色（分组）",
+          "type": "dimension",
+          "required": false,
+          "max_cardinality": 10
+        }
+      },
+      "channel_mapping_rules": {
+        "priority_order": ["y", "x", "color"],
+        "description_cn": "同柱状图。优先用于分类名较长或类别数 >8 的场景"
+      },
+      "prefer_over_column_when": [
+        "分类标签长度 >8 个字符",
+        "分类数量 >8 个",
+        "需要突出排名而非趋势"
+      ],
+      "anti_patterns": [
+        "❌ 把时间列映射到 x 轴",
+        "❌ 把数值列映射到 x 轴"
+      ]
+    },
+    "line": {
+      "label_cn": "折线图",
+      "icon": "line",
+      "category": "trend",
+      "intent_keywords_cn": ["趋势", "走势", "变化", "随时间", "增长", "下降", "波动", "time series"],
+      "uses_axis": true,
+      "channels": {
+        "x": {
+          "label_cn": "X 轴（时间/有序维度）",
+          "type": "dimension",
+          "required": true,
+          "forbidden_types": ["categorical.nominal"],
+          "preferred_types": ["temporal", "categorical.ordinal"],
+          "max_cardinality": 500,
+          "description_cn": "折线图的 X 轴必须有顺序意义（时间或有序维度），禁止用无序分类（如店铺名）",
+          "example_cn": "日期、月份、季度、年份、序号、阶段"
+        },
+        "y": {
+          "label_cn": "Y 轴（数值指标）",
+          "type": "metric",
+          "required": true,
+          "min": 1,
+          "max": 1,
+          "allow_subtypes": ["amount", "count", "ratio", "delta"],
+          "description_cn": "Y 轴为连续数值，折线展示趋势"
+        },
+        "color": {
+          "label_cn": "颜色（多条线）",
+          "type": "dimension",
+          "required": false,
+          "max_cardinality": 20,
+          "description_cn": "可选的分类维度，每条折线代表一个类别"
+        }
+      },
+      "channel_mapping_rules": {
+        "priority_order": ["x", "y", "color"],
+        "description_cn": "先确定 X（时间/有序），再选 Y（数值），最后选 color（多条线对比）",
+        "auto_sort": "x 轴为时间时必须按时间升序排列"
+      },
+      "auto_corrections": [
+        "如果 x 轴是分类维度但不是时间/有序 → 降级为 column"
+      ],
+      "anti_patterns": [
+        "❌ 把无序分类（店铺、SKU、供应商）映射到 x 轴——折线在无意义的类别间串联",
+        "❌ x 轴唯一值 >500——折线图会拥挤不堪",
+        "❌ 多指标时全部塞到 y 轴但不加 multi-quota——折线会错乱"
+      ]
+    },
+    "pie": {
+      "label_cn": "饼图",
+      "icon": "pie",
+      "category": "proportion",
+      "intent_keywords_cn": ["占比", "份额", "构成", "比例", "百分比", "分布"],
+      "uses_axis": true,
+      "channels": {
+        "color": {
+          "label_cn": "扇区（分类维度）",
+          "type": "dimension",
+          "required": true,
+          "max_cardinality": 10,
+          "preferred_types": ["categorical.nominal", "categorical.ordinal"],
+          "description_cn": "每个分类值对应一个扇区，唯一值 ≤10",
+          "example_cn": "平台、品类、地区、渠道"
+        },
+        "theta": {
+          "label_cn": "角度（数值指标）",
+          "type": "metric",
+          "required": true,
+          "positive": true,
+          "ratio_forbidden": true,
+          "allow_subtypes": ["amount", "count"],
+          "forbidden_subtypes": ["ratio", "delta"],
+          "description_cn": "角度通道代表扇区大小。禁止使用比率/百分比字段（会导致误读）；禁止负值字段",
+          "danger_names_cn": ["率", "比", "百分比", "占比", "份额", "增长率", "利润率"]
+        }
+      },
+      "channel_mapping_rules": {
+        "priority_order": ["theta", "color"],
+        "description_cn": "先确定角度（数值，正数，非比率），再选扇区（分类，≤10 类）"
+      },
+      "hard_fail_conditions": [
+        "theta 字段名包含『率/%/percent/ratio/占比/份额/百分比』→ 必须拒绝，改用 column",
+        "theta 字段存在负值 → 必须拒绝，改用 column/bar",
+        "分类字段唯一值 >10 → 必须拒绝，改用 column/bar",
+        "分类字段唯一值 <2 → 饼图无意义，改用 indicator"
+      ],
+      "anti_patterns": [
+        "❌ 把『净利润率(%)』作为角度字段——饼图会把 22.5% 当成 22.5 的绝对占比",
+        "❌ 把含负值的差量字段作为角度字段——负值扇区无法渲染",
+        "❌ 分类超过 10 个——飞镖图可读性极差"
+      ]
+    }
+  },
+
+  "field_name_heuristics": {
+    "description": "通过列名推断字段类型和适合的图表通道——帮助 LLM 在没有 type 信息时做判断",
+    "rules": [
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(时间|日期|date|time|年|月|日|timestamp).*"],
+        "channel": "temporal",
+        "suitable_for": ["line.x", "column.x (仅当时间意图)"],
+        "unsuitable_for": ["pie"]
+      },
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(序号|排名|位次|阶段|步骤|级别|等级|order|rank|stage|level|tier).*"],
+        "channel": "categorical.ordinal",
+        "suitable_for": ["line.x", "column.x", "bar.x"],
+        "unsuitable_for": []
+      },
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(率|%|percent|ratio|占比|份额|百分比).*"],
+        "channel": "metric.ratio",
+        "suitable_for": ["column.y", "bar.y", "line.y"],
+        "hard_forbidden_for": ["pie.theta"],
+        "warning_for": ["pie"],
+        "warning_message_cn": "比率/百分比字段不适合饼图——饼图会将其错误显示为整体占比"
+      },
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(增长|下降|变化|差值|diff|growth|change|delta).*"],
+        "channel": "metric.delta",
+        "suitable_for": ["column.y", "bar.y", "line.y"],
+        "hard_forbidden_for": ["pie.theta"],
+        "warning_for": ["pie"],
+        "warning_message_cn": "含负值的差量字段不适合饼图——角度通道不支持负值"
+      },
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(金额|收入|营收|利润|成本|金额|销售额|GMV|amount|revenue|profit|sales|cost).*"],
+        "channel": "metric.amount",
+        "suitable_for": ["column.y", "bar.y", "line.y", "pie.theta"],
+        "unsuitable_for": []
+      },
+      {
+        "pattern_type": "regex",
+        "patterns_cn": [".*(数量|个数|件数|笔数|人次|count|uv|pv).*"],
+        "channel": "metric.count",
+        "suitable_for": ["column.y", "bar.y", "line.y", "pie.theta"],
+        "unsuitable_for": []
+      }
+    ]
+  },
+
+  "generation_checklist": {
+    "description": "LLM 生成 chart JSON 前的自检清单——由后端注入提示词",
+    "steps": [
+      { "step": 1, "action": "分析 columns-schema 中每列的类型（时间/指标/分类）" },
+      { "step": 2, "action": "根据 chart-type 的 channels 定义，匹配最合适的列" },
+      { "step": 3, "action": "检查 anti_patterns：有无把时间列映射到 column.x？有无把比率列映射到 pie.theta？" },
+      { "step": 4, "action": "检查 hard_fail_conditions：饼图角度字段是否含比率/负值？分类是否 ≤10？" },
+      { "step": 5, "action": "检查 channel_mapping_rules.priority_order：是否按优先级选择了正确的列？" },
+      { "step": 6, "action": "若无法满足任何可视化图表类型，降级为 table" },
+      { "step": 7, "action": "输出 JSON 前，确认所有 axis.value 值在 columns-schema / SQL 输出列中存在" }
+    ]
+  },
+
+  "common_mistakes": {
+    "description": "LLM 常犯的错误——注入提示词进行警示教育",
+    "examples": [
+      {
+        "mistake_cn": "把『2024年各平台销售额』的『月份』字段映射到了 column.x",
+        "why_wrong": "column.x 禁止 temporal 字段，应改用 line 或把月份当作分类维度",
+        "correct": "若用户明确要求柱状图 → x 用『平台』，series/color 用『月份』做分组；或切换为 line"
+      },
+      {
+        "mistake_cn": "把『净利润率(%)』作为饼图的 theta 字段",
+        "why_wrong": "22.5% 是比率，饼图会当成 22.5 的绝对占比画扇区，产生误导",
+        "correct": "改用 column/bar，y 轴为净利润率(%)，x 轴为分类维度"
+      },
+      {
+        "mistake_cn": "把『店铺名称』映射到 line.x",
+        "why_wrong": "店铺名称是无序分类，折线在两个不相关的店铺间串联毫无意义",
+        "correct": "改用 column/bar；若无时间字段，则 line 不可用"
+      },
+      {
+        "mistake_cn": "饼图分类字段有 15 个唯一值",
+        "why_wrong": "饼图扇区 >10 个可读性极差",
+        "correct": "改用 column/bar；或对分类做 TopN 聚合（取 Top9 + 其他）"
+      },
+      {
+        "mistake_cn": "柱状图 x 轴有 200 个分类标签",
+        "why_wrong": "标签会严重重叠，无法阅读",
+        "correct": "改用条形图（bar）有更多垂直空间，或做 TopN 截断"
+      },
+      {
+        "mistake_cn": "axis 中引用了 SQL 没有的列名",
+        "why_wrong": "LLM 编造了列名（幻觉）",
+        "correct": "严格从 columns-schema 或 SQL SELECT 别名中复制列名"
+      }
+    ]
+  },
+
+  "self_correction_prompts": {
+    "description": "当后端 _validate_and_fix_chart_json 发现错误后，注入的结构化纠错提示",
+    "error_templates": {
+      "invalid_column": {
+        "template_cn": "axis.{channel}.value='{value}' 不在 SQL 输出列中。可用列: [{valid_columns}]。请重新选择，或若无法匹配则将 type 改为 table。",
+        "template_en": "axis.{channel}.value='{value}' is not in SQL output columns. Available: [{valid_columns}]. Reselect or fallback to table."
+      },
+      "pie_ratio_field": {
+        "template_cn": "检测到饼图 theta 字段 '{field_name}' 是比率/百分比字段。饼图角度通道禁止比率字段，请改用 column 或 bar，或将另一个非比率的数值字段作为 theta。",
+        "template_en": "Pie theta field '{field_name}' is a ratio/percentage — forbidden for pie angle channel. Switch to column/bar or pick another numeric field."
+      },
+      "pie_negative_field": {
+        "template_cn": "检测到饼图 theta 字段 '{field_name}' 含负值。饼图角度通道不支持负值，请改用 column 或 bar。",
+        "template_en": "Pie theta field '{field_name}' contains negative values — unsupported for angle channel. Switch to column/bar."
+      },
+      "line_unordered_x": {
+        "template_cn": "折线图 x 轴字段 '{field_name}' 是无序分类维度。折线图 x 轴必须是时间或有序维度。请改用 column/bar，或选择时间/有序字段作为 x 轴。",
+        "template_en": "Line x-axis '{field_name}' is an unordered categorical dimension. Line requires temporal or ordinal x. Switch to column/bar or pick a temporal/ordinal x field."
+      },
+      "column_temporal_x": {
+        "template_cn": "柱状图 x 轴字段 '{field_name}' 是时间维度。柱状图禁止时间列作为 x 轴（柱状图用于分类对比）。若有时间趋势意图请改用 line，否则选择分类字段作为 x 轴。",
+        "template_en": "Column x-axis '{field_name}' is a temporal field — forbidden for column. Use line for trends, or pick a categorical x field."
+      }
+    }
+  },
+
+  "frontend_fallback_rules": {
+    "description": "前端在 LLM 生成的 axis 不可用时的兜底策略——映射自 channel_mapping_rules 和 anti_patterns",
+    "auto_correct": {
+      "line_with_unordered_x": {
+        "condition": "chartType === 'line' && classifyColumn(data, xField) === 'categorical.nominal'",
+        "action": "降级为 column"
+      },
+      "column_with_temporal_x": {
+        "condition": "chartType === 'column' && classifyColumn(data, xField) === 'temporal'",
+        "action": "若存在非时间维度列 → 替换 x；否则降级为 line"
+      },
+      "pie_with_ratio_theta": {
+        "condition": "chartType === 'pie' && isRatioField(yField)",
+        "action": "降级为 column"
+      },
+      "pie_with_negative_theta": {
+        "condition": "chartType === 'pie' && dataHasNegative(yField)",
+        "action": "降级为 column"
+      }
+    }
+  }
+}

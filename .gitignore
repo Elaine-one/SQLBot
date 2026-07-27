@@ -192,20 +192,25 @@ test.py
 # ── IDE & dev tools ──
 CLAUDE.md
 
+# ── Docker env ──
+.env
+docker-compose.yaml
+docker-compose.original.yaml
+docker-compose.override.yaml
+
 # ── Local debug & temp ──
 .dbg/
 *.db
 debug-*.md
 
-# ── Local data directories ──
+# ── Local data & deployment ──
 data/
-
-# ── Local deployment overrides ──
 deploy/
-docker-compose.override.yaml
-docker-compose.original.yaml
 start-external-pg.sh
 
 # ── Local analysis docs ──
 docs/
 tests/
+
+# ── Large assets (managed outside git) ──
+g2-ssr/Arial_Unicode.ttf

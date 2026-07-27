@@ -2,9 +2,12 @@ import { BaseG2Chart } from '@/views/chat/component/BaseG2Chart.ts'
 import type { ChartAxis, ChartData } from '@/views/chat/component/BaseChart.ts'
 import type { G2Spec } from '@antv/g2'
 import {
+  buildAxisTitle,
   checkIsPercent,
+  fallbackXYAxes,
   formatNumber,
   getAxesWithFilter,
+  inferAxisUnit,
   processMultiQuotaData,
 } from '@/views/chat/component/charts/utils.ts'
 
@@ -16,10 +19,18 @@ export class Column extends BaseG2Chart {
   init(axis: Array<ChartAxis>, data: Array<ChartData>) {
     super.init(axis, data)
 
+    const numberFmt = this.numberFormat
     const axes = getAxesWithFilter(this.axis)
 
     if (axes.x.length == 0 || axes.y.length == 0) {
-      console.debug({ instance: this })
+      const fallback = fallbackXYAxes(this.axis, data)
+      if (fallback.x) axes.x = [{ ...fallback.x, type: 'x' }]
+      if (fallback.y) axes.y = [{ ...fallback.y, type: 'y' }]
+    }
+
+    if (axes.x.length == 0 || axes.y.length == 0) {
+      console.warn('[Column] init skipped: no x/y axis', { axis: this.axis, axes })
+      this._initOk = false
       return
     }
 
@@ -44,10 +55,19 @@ export class Column extends BaseG2Chart {
 
     const _data = checkIsPercent(y, config.data)
 
+    // 按 Y 值排序（对副本操作，不污染原始 this.data）
+    if (this._sortOrder !== 'none') {
+      const yField = y[0].value
+      _data.data.sort((a, b) => {
+        const va = Number(a[yField]) || 0
+        const vb = Number(b[yField]) || 0
+        return this._sortOrder === 'asc' ? va - vb : vb - va
+      })
+    }
+
     console.debug({ 'render-info': { x: x, y: y, series: series, data: _data }, instance: this })
 
     const options: G2Spec = {
-      ...this.chart.options(),
       type: 'interval',
       data: _data.data,
       encode: {
@@ -83,7 +103,7 @@ export class Column extends BaseG2Chart {
       },
       axis: {
         x: {
-          title: false, // x[0].name,
+          title: { text: x[0].name },
           labelFontSize: 12,
           labelAutoHide: {
             type: 'hide',
@@ -95,9 +115,9 @@ export class Column extends BaseG2Chart {
           labelAutoEllipsis: true,
         },
         y: {
-          title: false, // y[0].name,
+          title: { text: buildAxisTitle(y[0].name, inferAxisUnit(y[0].name)) },
           labelFormatter: (value: any) => {
-            return String(formatNumber(value))
+            return String(formatNumber(value, numberFmt))
           },
         },
       },
@@ -118,12 +138,12 @@ export class Column extends BaseG2Chart {
         if (series.length > 0) {
           return {
             name: data[series[0].value],
-            value: `${formatNumber(data[y[0].value])}${_data.isPercent ? '%' : ''}`,
+            value: `${formatNumber(data[y[0].value], numberFmt)}${_data.isPercent ? '%' : ''}`,
           }
         } else {
           return {
             name: y[0].name,
-            value: `${formatNumber(data[y[0].value])}${_data.isPercent ? '%' : ''}`,
+            value: `${formatNumber(data[y[0].value], numberFmt)}${_data.isPercent ? '%' : ''}`,
           }
         }
       },
@@ -135,7 +155,7 @@ export class Column extends BaseG2Chart {
                 if (value === undefined || value === null) {
                   return ''
                 }
-                return `${formatNumber(value)}${_data.isPercent ? '%' : ''}`
+                return `${formatNumber(value, numberFmt)}${_data.isPercent ? '%' : ''}`
               },
               position: (data: any) => {
                 if (data[y[0].value] < 0) {
@@ -153,10 +173,17 @@ export class Column extends BaseG2Chart {
         : [],
     } as G2Spec
 
-    if (series.length > 0) {
-      options.transform = [{ type: 'stackY' }]
-    }
+    // 注入 settings（统一入口，无外部 chart.options 调用）
+    this._applySettingsToOptions(options, this._activeSettings || {})
 
     this.chart.options(options)
+    this._initOk = true
+  }
+
+  protected _applyTypeSettings(settings: Record<string, any>): void {
+    if (settings.show_label !== undefined) {
+      this.showLabel = settings.show_label
+    }
+    super._applyTypeSettings(settings)
   }
 }

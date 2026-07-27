@@ -120,7 +120,7 @@
                   ><custom_small v-if="appearanceStore.themeColor !== 'default'"></custom_small>
                   <LOGO_fold v-else></LOGO_fold
                 ></el-icon>
-                {{ appearanceStore.pc_welcome ?? '你好，我是 SQLBot' }}
+                {{ appearanceStore.pc_welcome ?? `你好，我是 ${chatConfig.getSQLBotName}` }}
               </div>
               <div class="sub">
                 {{
@@ -232,7 +232,7 @@
                     :record-id="message.record?.id"
                     :loading="isTyping"
                     :message="message"
-                    :reasoning-name="['sql_answer', 'chart_answer']"
+                    :reasoning-name="['sql_answer']"
                     @scroll-bottom="scrollToBottom"
                     @finish="onChartAnswerFinish"
                     @error="onChartAnswerError"
@@ -242,8 +242,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message">
                         <div class="tool-btns">
@@ -337,8 +338,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message" />
                     </template>
@@ -364,8 +366,9 @@
                     <template #tool>
                       <ChatTokenTime
                         :record-id="message.record?.id"
-                        :duration="message.record?.duration"
-                        :total-tokens="message.record?.total_tokens"
+                        :duration="message.record?.execution_log?.duration_ms ? Math.round(message.record.execution_log.duration_ms / 1000) : message.record?.duration"
+                        :total-tokens="message.record?.execution_log?.tokens?.total ?? message.record?.total_tokens"
+                        :execution-log="message.record?.execution_log"
                       />
                       <ChatToolBar v-if="!message.isTyping" :message="message" />
                     </template>
@@ -692,10 +695,36 @@ function getChatList(callback?: () => void) {
 function onClickHistory(chat: ChatInfo) {
   scrollToBottom()
   forEach(chat?.records, (record: ChatRecord) => {
-    // getChatData(record.id)
-    if (record.predict_record_id) {
-      // getChatPredictData(record.id)
+    // Data loading is handled by ChartAnswer.onMounted when record.finish is true
+    // Fallback: load data immediately for records that aren't finished
+    if (!record.finish && record.id) {
+      loadRecordData(record.id)
     }
+    if (record.predict_record_id) {
+      loadPredictData(record.id)
+    }
+  })
+}
+
+function loadRecordData(recordId?: number) {
+  if (!recordId) return
+  chatApi.get_chart_data(recordId).then((response) => {
+    currentChat.value.records.forEach((record) => {
+      if (record.id === recordId) {
+        record.data = response
+      }
+    })
+  })
+}
+
+function loadPredictData(recordId?: number) {
+  if (!recordId) return
+  chatApi.get_chart_predict_data(recordId).then((response) => {
+    currentChat.value.records.forEach((record) => {
+      if (record.id === recordId) {
+        record.predict_data = response
+      }
+    })
   })
 }
 
@@ -907,8 +936,8 @@ async function clickAnalysis(id?: number) {
   currentRecord.create_time = new Date()
   currentRecord.chat_id = baseRecord.chat_id
   currentRecord.question = baseRecord.question
-  currentRecord.chart = baseRecord.chart
   currentRecord.data = baseRecord.data
+  // chart is NOT copied — agent auto-generates its own via _generate_chart()
   currentRecord.analysis_record_id = id
   currentRecord.analysis = ''
 
@@ -985,8 +1014,8 @@ async function clickPredict(id?: number) {
   currentRecord.create_time = new Date()
   currentRecord.chat_id = baseRecord.chat_id
   currentRecord.question = baseRecord.question
-  currentRecord.chart = baseRecord.chart
   currentRecord.data = baseRecord.data
+  // chart is NOT copied — agent auto-generates its own via _generate_chart()
   currentRecord.predict_record_id = id
   currentRecord.predict = ''
   currentRecord.predict_data = ''

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import BaseAnswer from './BaseAnswer.vue'
 import { chatApi, ChatInfo, type ChatMessage, ChatRecord } from '@/api/chat.ts'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import MdComponent from '@/views/chat/component/MdComponent.vue'
 import ChartBlock from '@/views/chat/chat-block/ChartBlock.vue'
 
@@ -82,9 +82,35 @@ const _loading = computed({
 })
 
 const stopFlag = ref(false)
+
+const streamState = reactive<Record<string, any>>({})
+
+// Resolve predict content from either SSE-populated predict_content (live)
+// or DB-persisted predict field (JSON: {"content":"...","reasoning_content":"..."})
+const predictContent = computed(() => {
+  const record = props.message?.record
+  if (!record) return ''
+  // Live SSE streaming
+  if (record.predict_content) return record.predict_content
+  // DB-loaded: parse JSON wrapper
+  if (record.predict) {
+    try {
+      const parsed = typeof record.predict === 'string'
+        ? JSON.parse(record.predict)
+        : record.predict
+      return parsed?.content || ''
+    } catch {
+      return record.predict  // plain text fallback
+    }
+  }
+  return ''
+})
+
 const sendMessage = async () => {
   stopFlag.value = false
   _loading.value = true
+  Object.keys(streamState).forEach(k => delete streamState[k])
+  let hasNativeReasoning = false
 
   if (index.value < 0) {
     _loading.value = false
@@ -98,6 +124,11 @@ const sendMessage = async () => {
     error = true
   }
   if (error) return
+
+  // Init tool_calls_log for thinking display
+  if (!currentRecord.tool_calls_log) {
+    currentRecord.tool_calls_log = []
+  }
 
   try {
     const controller: AbortController = new AbortController()
@@ -164,21 +195,60 @@ const sendMessage = async () => {
                 currentRecord.error = data.content
                 emits('error', currentRecord.id)
                 break
-              case 'predict-result':
-                predict_answer += data.reasoning_content
+              case 'reasoning':
+                hasNativeReasoning = true
+                predict_answer += data.content
+                streamState.predict = predict_answer
+                break
+              case 'clarify':
+                if (data.content) {
+                  streamState.clarify_question = data.content
+                }
+                break
+              case 'text-delta':
                 predict_content += data.content
-                _currentChat.value.records[index.value].predict = predict_answer
                 _currentChat.value.records[index.value].predict_content = predict_content
+                // Fallback：非推理模型用 text-delta 作为思考内容
+                if (!hasNativeReasoning && data.content) {
+                  streamState.predict = (streamState.predict || '') + data.content
+                }
                 break
-              case 'predict-failed':
-                emits('error', currentRecord.id)
+              case 'tool-call':
+                currentRecord.tool_calls_log.push({
+                  tool: data.tool_name,
+                  args: data.args,
+                  time: new Date(),
+                })
                 break
-              case 'predict-success':
-                //currentChat.value.records[_index].predict_data = data.content
+              case 'chart':
+                if (currentRecord.id) {
+                  chatApi.get_chart_data(currentRecord.id).then((response) => {
+                    if (response) {
+                      currentRecord.data = response
+                      console.log('[PredictAnswer] chart data loaded:', currentRecord.id)
+                    }
+                    currentRecord.chart = data.content
+                  }).catch(() => {
+                    currentRecord.chart = data.content
+                  })
+                } else {
+                  currentRecord.chart = data.content
+                }
+                break
+              case 'tool-result':
+                if (currentRecord.tool_calls_log.length > 0) {
+                  const last = currentRecord.tool_calls_log[currentRecord.tool_calls_log.length - 1]
+                  last.result = data.summary || (data.success ? 'success' : 'failed')
+                }
+                break
+              case 'execution-stats':
+                try {
+                  _currentChat.value.records[index.value].execution_log = JSON.parse(data.content)
+                } catch (e) { /* ignore */ }
+                break
+              case 'finish':
                 getChatPredictData(_currentChat.value.records[index.value].id)
                 emits('finish', currentRecord.id)
-                break
-              case 'predict_finish':
                 _loading.value = false
                 break
             }
@@ -219,6 +289,8 @@ function getChatPredictData(recordId?: number) {
 
           if (record.predict_data.length > 1) {
             getChatData(recordId)
+          } else if (record.chart) {
+            getChatData(recordId)  // Agent path: chart needs data for ChartBlock
           } else {
             loadingData.value = false
           }
@@ -271,8 +343,8 @@ defineExpose({ sendMessage, index: () => index.value, chatList: () => _chatList,
 </script>
 
 <template>
-  <BaseAnswer v-if="message" :message="message" :reasoning-name="['predict']" :loading="_loading">
-    <MdComponent :message="message.record?.predict_content" style="margin-top: 12px" />
+  <BaseAnswer v-if="message" :message="message" :reasoning-name="['predict']" :loading="_loading" :streaming-state="streamState">
+    <MdComponent :message="predictContent" style="margin-top: 12px" />
     <ChartBlock
       v-if="message.record?.predict_data?.length > 0 && message.record?.data"
       ref="chartBlockRef"
