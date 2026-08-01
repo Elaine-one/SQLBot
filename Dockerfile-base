@@ -9,7 +9,9 @@ RUN python --version && pip --version
 # Install uv tool
 COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /uvx /bin/
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null; \
+    apt-get update && apt-get install -y --no-install-recommends \
     wait-for-it \
     build-essential \
     curl \
@@ -22,8 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgif-dev \
     librsvg2-dev \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && curl -qL https://www.npmjs.com/install.sh | sh - \
-    && apt-get install -y nodejs \
+    && apt-get install -y nodejs npm \
+    && npm config set registry https://registry.npmmirror.com \
+    && npm config set fund false \
+    && npm config set audit false \
     && curl -L --connect-timeout 60 -m 1800 https://fit2cloud-support.oss-cn-beijing.aliyuncs.com/xpack-license/get-validator-linux | sh \
     && rm -rf /var/lib/apt/lists/* \
     && chmod g+xr /usr/bin/ld.so \
@@ -33,7 +37,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV DB_CLIENT=/opt/sqlbot/db_client
 ENV LD_LIBRARY_PATH="${DB_CLIENT}/oracle_instant_client:${LD_LIBRARY_PATH}"
 ARG TARGETARCH
-RUN apt-get update && \
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null; \
+    apt-get update && \
     apt-get install -y unzip libaio1 && \
     mkdir -p ${DB_CLIENT} && \
     if [ "$TARGETARCH" = "amd64" ]; then \

@@ -10,3 +10,32 @@ backend/.gitignore
 backend/README.md
 backend/scripts
 backend/.DS_Store
+
+# 通用 Python
+**/__pycache__
+**/*.pyc
+
+# 依赖与虚拟环境（避免构建上下文过大）
+**/.venv
+**/venv
+**/node_modules
+**/dist
+
+# 文档 / 测试 / 工具（不进入构建上下文）
+docs/
+tests/
+.github/
+.idea/
+*.log
+
+# installer/ 只保留应用镜像构建所需，其余排除
+installer/*
+!installer/Dockerfile
+!installer/start.sh
+
+# 数据 / 环境变量
+data/
+.env
+.env.*
+!.env.example
+!.env.sample

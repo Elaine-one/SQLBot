@@ -1,0 +1,75 @@
+# SQLBot Docker 开发模式（唯一 compose）
+# 用法：docker compose up -d
+#
+# 特点：基于基座镜像 + 源码挂载 + 容器内热重载（uvicorn --reload + vite HMR）
+#  - 改后端代码 → uvicorn 自动 reload
+#  - 改前端代码 → vite HMR 即时生效
+#  - 不需要每次改代码重建镜像（仅首次构建基座）
+# 前置条件：本地已有 sqlbot-python-pg:local（基座镜像，docker build -f Dockerfile-base -t sqlbot-python-pg:local .）
+# 说明：社区版部分前端资源 vite build 无法构建，故用 dev 模式（npm run dev，非 build），启动时忽略前端非关键错误
+services:
+  sqlbot:
+    image: sqlbot-python-pg:local
+    container_name: sqlbot
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${SQLBOT_WEB_PORT:-8000}:8000"   # 后端 API
+      - "${SQLBOT_MCP_PORT:-8001}:8001"   # MCP
+      - "5173:5173"                       # 前端 vite dev
+      - "5432:5432"                       # 内置 postgres（宿主机可用 pgAdmin/psql 连 localhost:5432）
+    working_dir: /opt/sqlbot/app
+    # 覆盖 start.sh 生产启动，改为开发模式：
+    #  1. 启动内置 postgres
+    #  2. 安装后端依赖（首次 uv sync，之后用 .venv 判断跳过）
+    #  3. uv run uvicorn --reload 起后端（源码挂载，改代码自动重载）—— 后端为核心，必须成功
+    #  4. npm run dev 起前端（源码挂载，HMR）—— 容错，失败不影响后端
+    command: >
+      sh -c "
+        /usr/local/bin/docker-entrypoint.sh postgres &
+        sleep 5 &&
+        wait-for-it 127.0.0.1:5432 --timeout=120 --strict &&
+        echo 'PostgreSQL started' &&
+        cd /opt/sqlbot/app &&
+        (
+          test -d .venv/bin || UV_HTTP_TIMEOUT=600 uv sync --extra cpu || echo 'uv sync failed, continuing';
+          exec uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers
+        ) &
+        (
+          cd /opt/sqlbot/frontend &&
+          (test -d node_modules/.bin || npm install --registry=https://registry.npmmirror.com --fetch-timeout=600000 --fetch-retries=5) &&
+          # 跳过 vue-tsc 类型检查（社区版类型检查失败），直接跑 vite dev
+          npx vite --host 0.0.0.0
+        ) &
+        wait
+      "
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-sqlbot}
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-Password123@pg}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # HuggingFace 国内镜像（官方 huggingface.co 在大陆不可达，embedding 模型依赖它）
+      - HF_ENDPOINT=https://hf-mirror.com
+    env_file:
+      - .env.sample
+    volumes:
+      # 源码挂载（热重载关键）
+      - ./backend:/opt/sqlbot/app
+      - ./frontend:/opt/sqlbot/frontend
+      - ./g2-ssr:/opt/sqlbot/g2-ssr
+      # .venv / node_modules 用匿名卷隔离（避免 Windows 挂载盘权限/性能问题）
+      - sqlbot-venv:/opt/sqlbot/app/.venv
+      - sqlbot-frontend-node:/opt/sqlbot/frontend/node_modules
+      - sqlbot-g2-node:/opt/sqlbot/g2-ssr/node_modules
+      # 数据持久化
+      - ./data/postgresql:/var/lib/postgresql/data
+      # embedding 模型（HF 下载缓存 + SQLBot 期望路径），重启不丢
+      - ./data/sqlbot/models:/opt/sqlbot/models
+      - ./data/sqlbot/excel:/opt/sqlbot/data/excel
+      - ./data/sqlbot/file:/opt/sqlbot/data/file
+      - ./data/sqlbot/images:/opt/sqlbot/images
+      - ./data/sqlbot/logs:/opt/sqlbot/app/logs
+volumes:
+  sqlbot-venv:
+  sqlbot-frontend-node:
+  sqlbot-g2-node:

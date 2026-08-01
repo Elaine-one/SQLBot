@@ -74,16 +74,18 @@ jobs:
 
           DOCKER_IMAGE=${ALIYUN_REGISTRY_HOST}/dataease/sqlbot
           cd installer
-          
+
           echo ${TAG_NAME} > ./sqlbot/templates/version
           sed -i -e "s/SQLBOT_TAG/${TAG_NAME}/g" sqlbot/docker-compose.yml
           mkdir images
-          for image in $(grep  "image: " sqlbot/docker*.yml | awk -F 'image:' '{print $2}'); do
-            image_path=$(eval echo $image)
-            image_name=$(echo ${image_path##*/})
-            docker pull $image_path
-            docker save $image_path  | gzip > images/$image_name.tar.gz
-          done
+          # 本地构建主镜像（基于本地源码，不再 pull 上游发布镜像）
+          # 前置：基座镜像 sqlbot-python-pg:local 已构建（若未构建，先 docker build -f Dockerfile-base -t sqlbot-python-pg:local .）
+          cd ..
+          docker build -f installer/Dockerfile -t ${DOCKER_IMAGE}:${TAG_NAME} .
+          cd installer
+          # 打包发布镜像进离线包（文件名需与 docker images 的 Repository:Tag 一致，供 load_images 判断）
+          image_name=$(echo ${DOCKER_IMAGE##*/})
+          docker save ${DOCKER_IMAGE}:${TAG_NAME} | gzip > images/${image_name}:${TAG_NAME}.tar.gz
           
           DOCKER_VERSION="docker-27.2.0"
           DOCKER_COMPOSE_VERSION="v2.29.2"
