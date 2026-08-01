@@ -11,11 +11,22 @@ docs/
 ├── project-structure.md       ← 项目目录结构说明
 ├── agent-maintenance/         ← Agent 系统维护手册
 ├── design/                    ← 架构设计文档
+├── deployment/                ← 部署与构建（Docker 构建链、离线包、镜像）
+├── development/               ← 开发手册（本地跑/Docker 跑/配置/常见问题）
 ├── dev-plans/                 ← 分阶段开发计划
 ├── operations/                ← 运维手册 & 流程分析
 ├── reference/                 ← 外部参考资料
 └── testing/                   ← 测试用例
 ```
+
+---
+
+## 项目结构
+
+| 文件 | 说明 |
+|------|------|
+| [project-structure.md](project-structure.md) | 项目目录结构说明：各子目录用途与 backend 内部结构速览 |
+| [README.en.md](README.en.md) | 英文版项目 README（与根目录 README.md 内容对应，供 GitHub 中英切换） |
 
 ---
 
@@ -46,6 +57,28 @@ Agent 系统维护与开发指南。
 | [SQLBot_旧管线代码清理分析.md](design/SQLBot_旧管线代码清理分析.md) | 旧 Pipeline 管线代码清理分析 |
 | [dingtalk-integration-analysis.md](design/dingtalk-integration-analysis.md) | 钉钉接入可行性分析：鉴权/权限隔离/图表渲染 |
 | [dingtalk-integration-guide.md](design/dingtalk-integration-guide.md) | 钉钉接入操作指南：从零到代码的分步流程 |
+| [thinking-switches-legacy.md](design/thinking-switches-legacy.md) | 思考过程开关遗留问题：分布盘点、命名混乱、死开关、分级整治方案 |
+
+---
+
+## [deployment/](deployment/)
+
+部署与构建：Docker 构建链、离线安装包、镜像管理。
+
+| 文件 | 说明 |
+|------|------|
+| [docker-build-and-deploy.md](deployment/docker-build-and-deploy.md) | **部署/构建 SSOT**：镜像构建链（上游→本地）、基座内容、本地构建步骤、开发模式 compose、installer 离线包、CI workflow、验证方案、风险 |
+| [installer 使用文档](../../installer/README.md) | `installer/` 目录使用说明：安装流程、sctl 命令、配置项、升级/卸载、手动构建离线包 |
+
+---
+
+## [development/](development/)
+
+开发手册：开发者怎么把 SQLBot 跑起来、怎么改代码。
+
+| 文件 | 说明 |
+|------|------|
+| [quickstart.md](development/quickstart.md) | **开发手册**：本地跑（宿主机/Docker 两种）、端口、账号密码、配置外部库、测试、常见问题 |
 
 ---
 
@@ -75,6 +108,7 @@ Agent 系统维护与开发指南。
 | [DataEase_SQLBot_运维手册.md](operations/DataEase_SQLBot_运维手册.md) | DataEase & SQLBot 运维速查：启动/停止/日志/状态 |
 | [execution-flow.md](operations/execution-flow.md) | 问答执行流程与 DataEase 集成模式分析 |
 | [conversation-fix.md](operations/conversation-fix.md) | 连续对话架构修复方案：跨轮次记忆持久化 |
+| [用户权限体系与子账户管理.md](operations/用户权限体系与子账户管理.md) | 用户权限体系与子账户管理：两层权限模型、数据库表结构、权限检查流程、子账户创建指南 |
 
 ---
 
