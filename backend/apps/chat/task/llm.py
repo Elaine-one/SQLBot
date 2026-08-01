@@ -44,6 +44,8 @@ class LLMService:
 
     enable_sql_row_limit: bool = settings.GENERATE_SQL_QUERY_LIMIT_ENABLED
     base_message_round_count_limit: int = settings.GENERATE_SQL_QUERY_HISTORY_ROUND_COUNT
+    # 兜底默认；实际总被下方 :151 的 config 循环覆盖。
+    # 权威源是 sys_arg.chat.expand_thinking_block（迁移 073 种子为 'true'）。
     expand_thinking_block: bool = True    # chat.expand_thinking_block
 
     def __init__(self, session: Session, current_user: CurrentUser, chat_question: ChatQuestion,
@@ -149,6 +151,8 @@ class LLMService:
                     count_value = 0
                 instance.base_message_round_count_limit = count_value
             if config.pkey == 'chat.expand_thinking_block':
+                # 权威源：sys_arg 行（迁移 073 种子为 'true'）。xpack 内置 'false' 仅在无 sys_arg 行时生效。
+                # UI 开关 parameter/index.vue 会 upsert 同一行。
                 instance.expand_thinking_block = config.pval.lower().strip() == 'true'
         return instance
 
