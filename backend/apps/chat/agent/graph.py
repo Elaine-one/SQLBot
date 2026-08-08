@@ -7,7 +7,8 @@ Builds a ReAct-style agent graph:
          │
          └──→ END (terminal triggered or max iterations)
 
-Cross-turn state is checkpointed via a shared LangGraph MemorySaver.
+Cross-turn state is restored by the adapter from database-backed Chat
+and ChatRecord state; no shared LangGraph checkpointer is used.
 """
 
 from __future__ import annotations
@@ -390,8 +391,8 @@ def build_agent_graph(llm, memory: AgentMemory, profile=None):
     Build the SQLBot Agent LangGraph.
 
     If `profile` is provided with explicit `tool_names`, only those tools
-    are bound to the LLM. Each profile carries its own tool list (QA=13,
-    analysis=5, predict=6). The registry is shared — tools are registered
+    are bound to the LLM. Each profile carries its own tool list (QA=14,
+    analysis=4, predict=5). The registry is shared — tools are registered
     once, and each profile picks what it needs by name.
 
     AgentMemory is captured via closure — NOT stored in LangGraph state
