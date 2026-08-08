@@ -1,6 +1,9 @@
 # SQLBot 用户权限体系与子账户管理
 
-> 文档版本：v1.0 | 更新日期：2026-07-24 | 基于 SQLBot-main
+> 状态：Current
+> 最后验证：2026-08-08
+> 适用范围：用户、工作空间、数据权限和子账户。
+> 事实来源：`backend/apps/system/`、`backend/apps/datasource/` 与相关迁移；测试脚本中的默认凭据仅限开发环境。
 
 ---
 
@@ -117,7 +120,7 @@ isSpaceAdmin(): boolean {
 | `language` | varchar(255) | 语言偏好 (zh-CN/zh-TW/en/ko-KR) |
 | `system_variables` | JSONB | 用户级系统变量覆盖 |
 
-**模型文件**：[backend/apps/system/models/user.py](backend/apps/system/models/user.py#L12-L30)
+**模型文件**：`backend/apps/system/models/user.py`
 
 ### sys_user_ws（用户-工作空间关联表）
 
@@ -128,7 +131,7 @@ isSpaceAdmin(): boolean {
 | `oid` | BigInt | 工作空间 ID（FK → sys_workspace.id） |
 | `weight` | int (default 0) | **0=普通成员, 非0=工作空间管理员** |
 
-**模型文件**：[backend/apps/system/models/system_model.py](backend/apps/system/models/system_model.py#L58-L65)
+**模型文件**：`backend/apps/system/models/system_model.py`
 
 ### sys_workspace（工作空间表）
 
@@ -161,7 +164,7 @@ SQLBot **没有**以下传统 RBAC 表：
 
 ### 1. 认证中间件（TokenMiddleware）
 
-**文件**：[backend/apps/system/middleware/auth.py](backend/apps/system/middleware/auth.py#L24-L229)
+**文件**：`backend/apps/system/middleware/auth.py`
 
 所有请求经过 `TokenMiddleware.dispatch()`，按优先级验证三种 Token：
 
@@ -173,7 +176,7 @@ SQLBot **没有**以下传统 RBAC 表：
 
 ### 2. 端点级权限装饰器（require_permissions）
 
-**文件**：[backend/apps/system/schemas/permission.py](backend/apps/system/schemas/permission.py#L49-L107)
+**文件**：`backend/apps/system/schemas/permission.py`
 
 ```python
 @require_permissions(permission=SqlbotPermission(role=['admin']))
@@ -201,7 +204,7 @@ SQLBot **没有**以下传统 RBAC 表：
 
 ### 3. 数据级权限（行列过滤）
 
-**文件**：[backend/apps/datasource/crud/permission.py](backend/apps/datasource/crud/permission.py)
+**文件**：`backend/apps/datasource/crud/permission.py`
 
 - **行权限**：为 SQL 查询注入 WHERE 条件，限制用户可见的数据行
 - **列权限**：过滤结果集中的敏感字段
@@ -300,7 +303,7 @@ curl -X PUT http://<host>:<port>/api/system/workspace/uws \
   }'
 ```
 
-> **注意**：只有全局 Admin 可以设置 `weight` 为非 0 值。工作空间管理员添加成员时 `weight` 固定为 0（参见 [workspace.py:133](backend/apps/system/api/workspace.py#L133)）。
+> **注意**：只有全局 Admin 可以设置 `weight` 为非 0 值。工作空间管理员添加成员时 `weight` 固定为 0（参见 `backend/apps/system/api/workspace.py`）。
 
 ---
 
@@ -320,7 +323,7 @@ curl -X PUT http://<host>:<port>/api/system/workspace/uws \
 
 ```powershell
 # 配置
-$BASE_URL = "http://localhost:8080/api"
+$BASE_URL = "http://localhost:8000/api/v1"
 $ADMIN_PWD = "SQLBot@123456"
 
 # 1. 登录 admin
@@ -411,12 +414,12 @@ Write-Host "默认密码: SQLBot@123456"
 
 ```bash
 # 获取普通用户 token
-curl -X POST http://localhost:8080/api/login/access-token \
+curl -X POST http://localhost:8000/api/v1/login/access-token \
   -H "Content-Type: application/json" \
   -d '{"account":"normal_test","password":"SQLBot@123456"}'
 
 # 尝试访问 admin 接口 → 应返回权限错误
-curl http://localhost:8080/api/user/pager/1/10 \
+curl http://localhost:8000/api/v1/user/pager/1/10 \
   -H "X-SQLBOT-TOKEN: Bearer <normal_user_token>"
 # 预期返回：403 或权限相关错误信息
 ```
@@ -484,20 +487,20 @@ curl http://localhost:8080/api/user/pager/1/10 \
 
 | 文件 | 行号 | 说明 |
 |------|------|------|
-| [backend/apps/system/models/user.py](backend/apps/system/models/user.py) | 12-40 | UserModel / UserPlatformModel 定义 |
-| [backend/apps/system/models/system_model.py](backend/apps/system/models/system_model.py) | 58-65 | UserWsModel（用户-空间关联）定义 |
-| [backend/apps/system/crud/user.py](backend/apps/system/crud/user.py) | 27-37 | `get_user_info()` — Admin 判定 + weight 读取 |
-| [backend/apps/system/api/user.py](backend/apps/system/api/user.py) | 166-202 | `user_create()` — 用户创建逻辑 |
-| [backend/apps/system/api/user.py](backend/apps/system/api/user.py) | 41-322 | 用户管理全部 API 端点 |
-| [backend/apps/system/api/workspace.py](backend/apps/system/api/workspace.py) | 20-186 | 工作空间成员管理 API |
-| [backend/apps/system/api/workspace.py](backend/apps/system/api/workspace.py) | 188-259 | 工作空间 CRUD API |
-| [backend/apps/system/schemas/permission.py](backend/apps/system/schemas/permission.py) | 19-107 | 权限装饰器 + SqlbotPermission |
-| [backend/apps/system/schemas/system_schema.py](backend/apps/system/schemas/system_schema.py) | 55-105 | UserCreator / UserInfoDTO 等 Schema |
-| [backend/apps/system/middleware/auth.py](backend/apps/system/middleware/auth.py) | 24-229 | TokenMiddleware 认证中间件 |
-| [backend/apps/system/api/login.py](backend/apps/system/api/login.py) | 20-52 | 登录/登出 API |
-| [backend/apps/datasource/crud/permission.py](backend/apps/datasource/crud/permission.py) | 14-77 | 行列级数据权限过滤 |
-| [backend/common/core/security.py](backend/common/core/security.py) | 15-44 | JWT / MD5 密码工具 |
-| [backend/common/core/config.py](backend/common/core/config.py) | 34-65 | TOKEN_KEY / DEFAULT_PWD 等设置 |
+| `backend/apps/system/models/user.py` | 12-40 | UserModel / UserPlatformModel 定义 |
+| `backend/apps/system/models/system_model.py` | 58-65 | UserWsModel（用户-空间关联）定义 |
+| `backend/apps/system/crud/user.py` | 27-37 | `get_user_info()` — Admin 判定 + weight 读取 |
+| `backend/apps/system/api/user.py` | 166-202 | `user_create()` — 用户创建逻辑 |
+| `backend/apps/system/api/user.py` | 41-322 | 用户管理全部 API 端点 |
+| `backend/apps/system/api/workspace.py` | 20-186 | 工作空间成员管理 API |
+| `backend/apps/system/api/workspace.py` | 188-259 | 工作空间 CRUD API |
+| `backend/apps/system/schemas/permission.py` | 19-107 | 权限装饰器 + SqlbotPermission |
+| `backend/apps/system/schemas/system_schema.py` | 55-105 | UserCreator / UserInfoDTO 等 Schema |
+| `backend/apps/system/middleware/auth.py` | 24-229 | TokenMiddleware 认证中间件 |
+| `backend/apps/system/api/login.py` | 20-52 | 登录/登出 API |
+| `backend/apps/datasource/crud/permission.py` | 14-77 | 行列级数据权限过滤 |
+| `backend/common/core/security.py` | 15-44 | JWT / MD5 密码工具 |
+| `backend/common/core/config.py` | 34-65 | TOKEN_KEY / DEFAULT_PWD 等设置 |
 
 ### 前端
 

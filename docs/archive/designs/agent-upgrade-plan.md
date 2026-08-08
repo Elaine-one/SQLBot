@@ -336,7 +336,7 @@ async def edit_sql_query(record_id: str, edits: list[dict], memory: AgentMemory)
 
 ### 4.1 设计原则
 
-对比 [Metabase Prompt 系统](docs/metabase-ai-analysis.md#四prompt-系统) 的设计：
+对比 [Metabase Prompt 系统](../../reference/metabase-ai-analysis.md#四prompt-系统) 的设计：
 
 | Metabase 做法 | SQLBot 借鉴 |
 |-------------|-----------|
@@ -1012,4 +1012,4 @@ backend/apps/datasource/crud/datasource.py ← 单表版 get_table_schema
 | [discovery.selmer](resources/metabot/prompts/shared/prompt_snippets/discovery.selmer) | 发现策略：search→drill + 不绕圈 |
 | [sql-querying-only.selmer](resources/metabot/prompts/system/sql-querying-only.selmer) | Know Your Data First + 工具选择指南 + 澄清策略 |
 | [skills.selmer](resources/metabot/prompts/shared/skills.selmer) | Skills 目录格式 |
-| [sql-generation-cross-language-discovery.md](docs/开发文档/sql-generation-cross-language-discovery.md) | 概念驱动的跨语言发现策略 |
+| 原“跨语言发现策略”文档 | 原引用文档已不在本仓库；保留此条仅说明当时的设计背景 |

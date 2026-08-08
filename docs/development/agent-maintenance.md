@@ -1,5 +1,9 @@
 # SQLBot Agent 系统维护手册
 
+> 状态：Current（应随 Agent 工具、Profile 与 SSE 事件同步复核）  
+> 最后验证：2026-08-08  
+> 适用范围：`backend/apps/chat/agent/`。
+
 本文档面向**后期维护人员**，涵盖三个 Agent（QA / analysis / predict）的架构、工具注册流程、思考-回复链路、以及常见维护操作。
 
 ---

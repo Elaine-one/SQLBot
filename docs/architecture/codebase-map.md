@@ -1,33 +1,39 @@
 # SQLBot 项目目录结构
 
+> 状态：Current  
+> 最后验证：2026-08-08  
+> 适用范围：代码库目录和常见改动入口。  
+> 事实来源：仓库目录、`docker-compose.yml`、`backend/main.py`。
+
 本文件说明项目根目录下各子目录的用途。
 
 ## 目录速览
 
 ```
-SQLBot-main/
+SQLBot/
 ├── backend/      ← Python 后端（API + Agent + 数据库引擎）
 ├── frontend/     ← Vue 3 前端（聊天界面 + 图表渲染 + 管理系统）
 ├── tests/        ← 后端测试套件
-├── docs/         ← 项目文档（设计、开发计划、运维手册）
-├── deploy/       ← Docker Compose 全栈部署配置
+├── docs/         ← 当前架构、开发、部署、运维、规格与历史归档
+├── Dockerfile-base ← 本地 Docker 开发基座
+├── docker-compose.yml ← Docker 开发模式（源码挂载）
 ├── data/         ← 运行时持久化数据（PostgreSQL + SQLBot 日志）
 ├── installer/    ← 生产环境安装脚本
 ├── g2-ssr/       ← G2 图表服务端渲染（SSR，PNG 导出）
-└── locales/      ← 后端国际化翻译文件
+└── .github/      ← 构建、发布和拼写检查工作流
 ```
 
 ---
 
-## [backend/](backend/)
+## [backend/](../backend/)
 
 Python 3.11 + FastAPI + LangGraph 后端服务。
 
 ```
 backend/
-├── main.py                # FastAPI 入口 + MCP Server (8001)
+├── main.py                # FastAPI 主应用 + MCP 应用挂载
 ├── apps/                  # 业务模块
-│   ├── chat/agent/        # ⭐ Agent 引擎 (ReAct + 15 工具)
+│   ├── chat/agent/        # ⭐ Agent 引擎（注册表 17 个工具；Profile 按需分配）
 │   ├── datasource/        # 数据源管理 + embedding
 │   ├── db/                # 多数据库查询引擎 (12+ 类型)
 │   ├── system/            # 用户/工作空间/鉴权
@@ -37,7 +43,7 @@ backend/
 │   ├── data_training/     # SQL 训练示例
 │   ├── template/          # 提示词模板 + 语义层
 │   └── mcp/               # MCP Server 端点
-├── common/core/           # 配置 + 依赖注入 + 工具函数
+├── common/                # 配置、依赖、鉴权上下文、缓存和公共工具
 ├── alembic/               # 数据库迁移脚本
 ├── templates/             # 提示词模板 + 方言指南
 ├── scripts/               # 辅助脚本
@@ -48,7 +54,7 @@ backend/
 
 ---
 
-## [frontend/](frontend/)
+## [frontend/](../frontend/)
 
 Vue 3 + TypeScript + Vite 6 前端。
 
@@ -70,7 +76,7 @@ frontend/src/
 
 ---
 
-## [tests/](tests/)
+## [tests/](../tests/)
 
 后端测试套件，覆盖 Agent 工具、编译器、图表系统、SQL 校验、供应商配置。
 
@@ -84,37 +90,35 @@ frontend/src/
 
 ---
 
-## [docs/](docs/)
+## [docs/](.)
 
-项目文档，按类型分为 6 个子目录。
+项目文档按当前事实、规格、决策与归档分层。
 
 | 子目录 | 内容 |
 |--------|------|
-| `design/` | 架构设计文档（Agent 升级、Compiler、多租户） |
-| `dev-plans/` | 分阶段开发计划（Phase1~3） |
-| `agent-maintenance/` | Agent 系统维护手册 |
-| `operations/` | 运维手册 + 执行流程分析 |
-| `reference/` | 外部参考资料（Metabase 分析） |
-| `testing/` | 测试用例 |
+| `architecture/` | 已核对的系统架构、数据流和代码库地图 |
+| `development/` | 开发手册、Agent 维护和变更流程 |
+| `deployment/` / `operations/` | 构建部署与日常运维 |
+| `specs/` / `decisions/` | 重要变更规格与架构决策记录 |
+| `reference/` / `testing/` | 外部参考与测试资产 |
+| `archive/` | 历史设计、计划和案例；不代表当前实现 |
 
-详细索引见 [docs/README.md](docs/README.md)。
-
----
-
-## [deploy/](deploy/)
-
-Docker Compose 全栈部署配置。
-
-```
-deploy/
-└── docker-compose.yaml    # API :8000 + MCP :8001 + PostgreSQL :5432
-```
-
-启动：`docker compose up -d`
+详细索引见 [docs/README.md](README.md)。
 
 ---
 
-## [data/](data/)
+## Docker 开发模式
+
+仓库根目录的 `docker-compose.yml` 是当前开发编排文件，不存在 `deploy/` 目录。它以单个 `sqlbot` 容器启动内置 PostgreSQL、主 API（8000）和 Vite（5173），并挂载 `backend/`、`frontend/` 与 `g2-ssr/` 源码。8001 端口虽映射，但 `mcp_app` 默认未启动；G2 SSR 也未在默认开发命令中运行。
+
+```bash
+docker build -f Dockerfile-base -t sqlbot-python-pg:local .
+docker compose up -d
+```
+
+---
+
+## [data/](../data/)
 
 容器运行时持久化卷的宿主机挂载点。
 
@@ -127,7 +131,7 @@ data/
 
 ---
 
-## [installer/](installer/)
+## [installer/](../installer/)
 
 生产环境一键安装脚本。
 
@@ -136,7 +140,7 @@ installer/
 ├── install.sh             # 安装入口
 ├── uninstall.sh           # 卸载脚本
 ├── sctl                   # 服务控制工具（start/stop/restart/status）
-├── install.conf           # 安装配置文件
+├── install.conf           # 安装配置文件（如当前发行包提供）
 └── sqlbot/
     ├── docker-compose.yml # Docker 编排模板
     └── templates/         # Nginx 等配置模板
@@ -144,7 +148,7 @@ installer/
 
 ---
 
-## [g2-ssr/](g2-ssr/)
+## [g2-ssr/](../g2-ssr/)
 
 基于 Node.js 的 G2 图表服务端渲染服务。
 
@@ -160,6 +164,4 @@ g2-ssr/
 
 ---
 
-## [locales/](locales/)
-
-后端国际化翻译文件，供 OpenAPI 文档动态翻译使用。
+后端 OpenAPI 翻译文件实际位于 `backend/apps/swagger/locales/`；仓库根目录没有独立的 `locales/` 目录。

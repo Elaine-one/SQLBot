@@ -1,5 +1,9 @@
 # SQLBot Installer（离线/在线安装包）
 
+> 状态：Current
+> 最后验证：2026-08-08
+> 适用范围：生产安装、升级与卸载。
+
 > 本文档说明 `installer/` 目录的用途、安装流程、配置项与升级/卸载。
 > 面向**部署运维**；开发模式见 `../docs/deployment/docker-build-and-deploy.md`。
 

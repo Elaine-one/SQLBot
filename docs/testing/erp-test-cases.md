@@ -1,5 +1,9 @@
 # SQLBot ERP 跨境电商 测试用例
 
+> 状态：Current（测试资产）
+> 最后验证：2026-08-08
+> 适用范围：`erp_cross_border` PostgreSQL 测试数据集。
+
 > 基于数据库 `erp_cross_border` (PostgreSQL)，共 41 张表。
 > 测试目标：验证 SQLBot Agent 能否正确理解自然语言、生成正确 SQL、处理跨表查询。
 

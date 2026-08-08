@@ -1,5 +1,9 @@
 # SQLBot 开发手册（Quickstart）
 
+> 状态：Current
+> 最后验证：2026-08-08
+> 适用范围：本地与 Docker 开发环境。
+
 > 面向**开发者**：怎么把 SQLBot 在本地跑起来、怎么改代码、怎么调试。
 > 部署/构建细节见 [docs/deployment/docker-build-and-deploy.md](../deployment/docker-build-and-deploy.md)；运维见 [docs/operations/DataEase_SQLBot_运维手册.md](../operations/DataEase_SQLBot_运维手册.md)。
 
@@ -75,7 +79,7 @@ docker compose up -d
 | 端口 | 服务 |
 |------|------|
 | 8000 | 后端 API（uvicorn --reload） |
-| 8001 | MCP |
+| 8001 | MCP 端口映射；默认 Compose 未启动 `mcp_app` |
 | 5173 | 前端 vite dev |
 | 5432 | 内置 postgres（宿主机可连 localhost:5432） |
 
@@ -130,7 +134,7 @@ docker exec -it sqlbot psql -U root -d sqlbot   # 连内置 postgres
 
 ```bash
 cd backend
-uv run pytest tests/ -v      # 全部测试
+uv run pytest ../tests/ -v   # 全部测试
 uv run ruff check .          # 代码检查
 uv run mypy apps/            # 类型检查
 ```
@@ -154,4 +158,4 @@ uv run mypy apps/            # 类型检查
 
 - [docs/deployment/docker-build-and-deploy.md](../deployment/docker-build-and-deploy.md) —— 部署/构建 SSOT
 - [docs/operations/DataEase_SQLBot_运维手册.md](../operations/DataEase_SQLBot_运维手册.md) —— 运维速查
-- [docs/agent-maintenance/README.md](../agent-maintenance/README.md) —— Agent 系统维护
+- [docs/development/agent-maintenance.md](agent-maintenance.md) —— Agent 系统维护

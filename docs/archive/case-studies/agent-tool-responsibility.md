@@ -165,7 +165,7 @@ if self.memory._charts_this_turn:
 
 ## 7. 相关文档
 
-- [Agent 系统维护手册](./README.md) — 工具注册流程、SSE 事件类型、跨轮次内存
-- [工具注册代码](../backend/apps/chat/agent/tools/register_all.py)
-- [ToolRegistry](../backend/apps/chat/agent/tools/registry.py)
-- [AgentExecutor](../backend/apps/chat/agent/executor.py)
+- [Agent 系统维护手册](../../development/agent-maintenance.md) — 工具注册流程、SSE 事件类型、跨轮次内存
+- [工具注册代码](../../../backend/apps/chat/agent/tools/register_all.py)
+- [ToolRegistry](../../../backend/apps/chat/agent/tools/registry.py)
+- [AgentExecutor](../../../backend/apps/chat/agent/executor.py)

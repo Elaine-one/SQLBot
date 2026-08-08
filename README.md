@@ -1,117 +1,91 @@
 <p align="center"><img src="https://resource-fit2cloud-com.oss-cn-hangzhou.aliyuncs.com/sqlbot/sqlbot.png" alt="SQLBot" width="300" /></p>
-<h3 align="center">基于大模型和 RAG 的智能问数系统</h3>
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/14540" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14540" alt="dataease%2FSQLBot | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</p>
+<h3 align="center">基于 DataEase SQLBot 的 Agent 化智能问数社区二次开发版</h3>
 
-<p align="center">
-  <a href="https://github.com/dataease/SQLBot/releases/latest"><img src="https://img.shields.io/github/v/release/dataease/SQLBot" alt="Latest release"></a>
-  <a href="https://github.com/dataease/SQLBot"><img src="https://img.shields.io/github/stars/dataease/SQLBot?color=%231890FF&style=flat-square" alt="Stars"></a>    
-  <a href="https://hub.docker.com/r/dataease/SQLbot"><img src="https://img.shields.io/docker/pulls/dataease/sqlbot?label=downloads" alt="Download"></a><br/>
-</p>
+<p align="center">面向关系型数据源的对话式分析：自然语言提问、受控 SQL 查询、图表呈现与后续分析。</p>
 
-<p align="center">
-  <a href="README.md"><img alt="中文(简体)" src="https://img.shields.io/badge/中文(简体)-d9d9d9"></a>
-  <a href="/docs/README.en.md"><img alt="English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-</p>
-<hr/>
+> 本仓库是在 [DataEase SQLBot](https://github.com/dataease/SQLBot) 基础上的社区二次开发版本。当前实现以 Agent 作为默认问答引擎；本文档描述本仓库，而非上游发布版。
 
+## 当前能力
 
-SQLBot 是一款基于大语言模型和 RAG 的智能问数系统，由 DataEase 开源项目组匠心出品。借助 SQLBot，用户可以实现对话式数据分析（ChatBI），快速提炼获取所需的数据信息及可视化图表，并且支持进一步开展智能分析。
+- **Agent 化问答**：QA Agent 按需检索表结构、样例数据和字段值，生成、编辑、校验并执行 SQL。
+- **分析与预测**：可基于已有查询记录启动独立的分析或预测流程，而不重复执行原始问答链路。
+- **业务上下文**：术语、SQL 示例、提示词、数据源元数据和历史记录共同辅助问答。
+- **流式交互**：后端通过 SSE 返回可见工具事件、文本、图表和完成状态。
+- **权限与隔离**：问答运行时携带用户、工作空间和数据源上下文，数据访问遵循既有权限边界。
+- **集成与部署**：提供 Web 前端、MCP 服务、Docker 开发编排、生产镜像及离线安装能力。
 
 ## 工作原理
 
-<img width="1153" height="563" alt="image" src="https://github.com/user-attachments/assets/8bc40db1-2602-4b68-9802-b9be36281967" />
+### 面向用户的工作原理
 
-## 核心优势
+用户可以通过自然语言提出数据问题。SQLBot 会结合业务配置和数据源信息，由 Agent 探索数据结构、生成并执行 SQL，最后返回数据表、图表和分析结果。
 
-- **开箱即用**：仅需简单配置大模型与数据源，无需复杂开发，即可快速开启智能问数；依托大模型自然语言理解与 SQL 生成能力，结合 RAG 技术，实现高质量 Text-to-SQL 转换。
-- **安全可控**：提供工作空间级资源隔离机制，构建清晰数据边界，保障数据访问安全；支持细粒度数据权限配置，强化权限管控能力，确保使用过程合规可控。
-- **易于集成**：支持多种集成方式，提供 Web 嵌入、弹窗嵌入、MCP 调用等能力；能够快速嵌入到 n8n、Dify、MaxKB、DataEase 等应用，让各类应用快速拥有智能问数能力。
-- **越问越准**：支持自定义提示词、术语库配置，可维护 SQL 示例校准逻辑，精准匹配业务场景；高效运营，基于用户交互数据持续迭代优化，问数效果随使用逐步提升，越问越准。
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/8a8e90d8-920a-47e4-a6ba-93fc5a3a8b7c" alt="SQLBot 工作原理" width="900" />
+</p>
 
-## 支持的大模型服务商
+产品层面可以概括为“自然语言提问 → 理解与查询 → 回答与分析”。实际执行不是单次 Prompt：Agent 会按需读取表结构、样例数据和字段信息，生成并执行 SQL（必要时自动修正），再将结果转换为用户可读的数据、图表或分析内容。
 
-| 服务商 | API 兼容 |
-|--------|----------|
-| 阿里云百炼 | OpenAI 兼容 |
-| 千帆大模型 | OpenAI 兼容 |
-| DeepSeek | OpenAI 兼容 |
-| 腾讯混元 | OpenAI 兼容 |
-| 讯飞星火 | OpenAI 兼容 |
-| Gemini | OpenAI 兼容 |
-| OpenAI | 原生 |
-| Kimi | OpenAI 兼容 |
-| 腾讯云 | OpenAI 兼容 |
-| 火山引擎 | OpenAI 兼容 |
-| MiniMax | OpenAI 兼容 |
-| 通用 OpenAI 兼容 | 自定义 |
+### 面向开发者的源码架构
 
-## 快速开始
+下面的图对应当前仓库的实际调用链，说明 API、Agent 适配层、Agent Profile、工具、数据源、持久化和 SSE 之间的关系。
 
-### 安装部署
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/027c8d9e-a13d-4c84-8b9c-8a338296a3b0" alt="SQLBot 源码架构" width="900" />
+</p>
 
-准备一台 Linux 服务器，安装好 [Docker](https://docs.docker.com/get-docker/)，执行以下一键安装脚本：
+详细说明见 [系统架构概览](docs/architecture/overview.md)、[问答 Agent 流程](docs/architecture/chat-agent-flow.md) 和 [对话状态边界](docs/architecture/state-and-storage.md)。
+
+## 快速开始（开发）
+
+### Docker 开发环境
+
+前置条件：Docker 与 Docker Compose。
 
 ```bash
-docker run -d \
-  --name sqlbot \
-  --restart unless-stopped \
-  -p 8000:8000 \
-  -p 8001:8001 \
-  -v ./data/sqlbot/excel:/opt/sqlbot/data/excel \
-  -v ./data/sqlbot/file:/opt/sqlbot/data/file \
-  -v ./data/sqlbot/images:/opt/sqlbot/images \
-  -v ./data/sqlbot/logs:/opt/sqlbot/app/logs \
-  -v ./data/postgresql:/var/lib/postgresql/data \
-  --privileged=true \
-  dataease/sqlbot
+docker build -f Dockerfile-base -t sqlbot-python-pg:local .
+docker compose up -d
 ```
 
-你也可以通过 [1Panel 应用商店](https://apps.fit2cloud.com/1panel) 快速部署 SQLBot。
+默认启动端口：主 API `8000`、前端 `5173`、PostgreSQL `5432`。`8001` 虽映射为 MCP 端口，但默认 Compose 不启动 `mcp_app`；G2 SSR 也需单独启动。首次运行前请根据 [.env.sample](.env.sample) 创建并配置 `.env`。
 
-如果是内网环境，你可以通过 [离线安装包方式](https://community.fit2cloud.com/#/products/sqlbot/downloads) 部署 SQLBot。
+### 本地开发
 
-### 访问方式
+```bash
+# 后端
+cd backend
+uv sync --extra cpu
+uv run uvicorn main:app --port 8000 --reload
 
-- 在浏览器中打开: http://<你的服务器IP>:8000/
-- 用户名: admin
-- 密码: SQLBot@123456
+# 前端（另开终端）
+cd frontend
+npm install
+npm run dev                 # 若 vue-tsc 失败，改用 npx vite
+```
 
-### 联系我们
+完整开发、部署、安装和运维说明请从 [文档中心](docs/README.md) 进入。
 
-如你有更多问题，可以加入我们的技术交流群与我们交流。
+## 开发与文档规范
 
-<img width="180" height="180" alt="contact_me_qr" src="https://github.com/user-attachments/assets/a4b84255-dbe1-43eb-b73f-2bc4ee13f037" />
+- 当前架构、部署和操作说明均在 [`docs/`](docs/README.md)；只有标为 **Current** 的文档可作为当前实现依据。
+- 新能力、跨模块重构、数据/API/权限/部署或 Agent 行为变化，应先按 [Spec 规范](docs/specs/README.md) 明确范围与验收标准。
+- 长期架构取舍记录在 [ADR](docs/decisions/README.md)；历史计划和设计已移入 `docs/archive/`，不可直接作为实施依据。
+- 开发者和编码 Agent 的通用约束见 [CLAUDE.md](CLAUDE.md)。
 
-## UI 展示
+## 项目文档
 
-  <tr>
-    <img alt="q&a" src="https://github.com/user-attachments/assets/55526514-52f3-4cfe-98ec-08a986259280"   />
-  </tr>
+| 主题 | 入口 |
+|---|---|
+| 代码库结构与改动入口 | [代码库地图](docs/architecture/codebase-map.md) |
+| Agent、SSE 与持久化 | [问答 Agent 流程](docs/architecture/chat-agent-flow.md) |
+| 权限与子账户 | [权限与子账户体系](docs/architecture/permissions-and-tenancy.md) |
+| 本地开发与测试 | [开发手册](docs/development/quickstart.md) |
+| 构建、镜像与离线安装 | [部署与构建](docs/deployment/docker-build-and-deploy.md) |
+| 日常运维 | [运维手册](docs/operations/DataEase_SQLBot_运维手册.md) |
 
-## Star History
+## 开源许可与致谢
 
-[![Star History Chart](https://api.star-history.com/svg?repos=dataease/sqlbot&type=Date)](https://www.star-history.com/#dataease/sqlbot&Date)
+本仓库遵循 [FIT2CLOUD Open Source License](LICENSE)：它基于 GPLv3，且包含附加条件。使用、分发或二次开发前请阅读完整许可证文本。
 
-## 飞致云旗下的其他明星项目
-
-- [DataEase](https://github.com/dataease/dataease/) - 人人可用的开源 BI 工具
-- [1Panel](https://github.com/1panel-dev/1panel/) - 现代化、开源的 Linux 服务器运维管理面板
-- [MaxKB](https://github.com/1panel-dev/MaxKB/) - 强大易用的企业级智能体平台
-- [JumpServer](https://github.com/jumpserver/jumpserver/) - 广受欢迎的开源堡垒机
-- [Cordys CRM](https://github.com/1Panel-dev/CordysCRM) - 新一代的开源 AI CRM 系统
-- [Halo](https://github.com/halo-dev/halo/) - 强大易用的开源建站工具
-- [MeterSphere](https://github.com/metersphere/metersphere/) - 新一代的开源持续测试工具
-
-## License
-
-本仓库遵循 [FIT2CLOUD Open Source License](LICENSE) 开源协议，该许可证本质上是 GPLv3，但有一些额外的限制。
-
-你可以基于 SQLBot 的源代码进行二次开发，但是需要遵守以下规定：
-
-- 不能替换和修改 SQLBot 的 Logo 和版权信息；
-- 二次开发后的衍生作品必须遵守 GPL V3 的开源义务。
-
-如需商业授权，请联系 support@fit2cloud.com 。
+该许可证要求在 SQLBot 前端控制台或应用中不得移除或修改 SQLBot Logo 与版权信息；除附加条件外，其他权利与限制遵循 GPLv3。感谢 DataEase SQLBot 开源项目及其贡献者。

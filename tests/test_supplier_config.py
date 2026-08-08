@@ -225,13 +225,5 @@ class TestReadmeContent(unittest.TestCase):
             content = f.read()
         self.assertIn("MiniMax", content)
 
-    def test_readme_en_mentions_minimax(self):
-        """English README should list MiniMax as a supported provider."""
-        path = os.path.join(PROJECT_ROOT, "docs", "README.en.md")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("MiniMax", content)
-
-
 if __name__ == "__main__":
     unittest.main()

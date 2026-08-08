@@ -1,5 +1,9 @@
 # SQLBot 部署与构建
 
+> 状态：Current
+> 最后验证：2026-08-08
+> 适用范围：Docker 构建链、开发镜像、生产镜像和离线安装包。
+
 > 本文档是 SQLBot **Docker 构建链 + 部署形态**的唯一权威说明（SSOT）。对部署/构建的任何改动，请先读本文档并在此更新。
 >
 > 最后更新: 2026-08-01
@@ -247,7 +251,7 @@ volumes:
 
 - [installer 使用文档](../../installer/README.md) —— installer 目录的安装/配置/升级/卸载
 - [docs/operations/DataEase_SQLBot_运维手册.md](../operations/DataEase_SQLBot_运维手册.md) —— 启动/停止/日志速查
-- [docs/dev-plans/cleanup-lessons-learned.md](../dev-plans/cleanup-lessons-learned.md) —— 部署踩坑记录（第 9 节：官方镜像不可用）
+- [历史部署踩坑记录](../archive/plans/cleanup-lessons-learned.md) —— 仅用于追溯，不代表当前部署流程
 
 ---
 

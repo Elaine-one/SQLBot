@@ -1,131 +1,90 @@
-# SQLBot 文档索引
+# SQLBot 文档中心
 
-本目录包含 SQLBot 项目的设计文档、开发计划、运维手册和参考资料。
+本文档中心面向项目使用者、维护者和编码 Agent。阅读时先确认文档状态：只有标为 **Current** 的文档可以作为当前实现依据；代码与测试是运行行为的最终事实来源。
 
-## 目录结构
+## 文档状态
 
-```
+| 状态 | 含义 | 使用方式 |
+|---|---|---|
+| **Current** | 已按当前代码或部署配置核对 | 可作为开发、运维和交接依据 |
+| **Decision** | 已确定的架构取舍及其理由 | 修改相关边界前必须阅读 |
+| **Proposed** | 尚未批准或尚未完成的规格 | 不能当作既有能力 |
+| **Archived** | 历史设计、实施计划或排障记录 | 仅用于追溯背景，不代表当前实现 |
+| **Reference** | 外部项目或专项集成的调研资料 | 仅作参考，不能代替本项目事实 |
+
+新的 Current、Decision 和 Proposed 文档应在标题后写明状态、最后验证日期、适用范围与代码/测试来源。
+
+## 阅读路径
+
+- **首次接手项目**：从 [开发手册](development/quickstart.md) → [代码库地图](architecture/codebase-map.md) → [问答 Agent 流程](architecture/chat-agent-flow.md) 开始。
+- **修改 Agent、SSE 或图表**：阅读 [问答 Agent 流程](architecture/chat-agent-flow.md) 与 [Agent 维护手册](development/agent-maintenance.md)。
+- **修改权限、账户或数据隔离**：阅读 [权限与子账户体系](architecture/permissions-and-tenancy.md)。
+- **构建、部署与安装**：阅读 [部署与构建](deployment/docker-build-and-deploy.md)、[运维手册](operations/DataEase_SQLBot_运维手册.md) 和 [installer 使用说明](../installer/README.md)。
+- **规划或实施重要改动**：先阅读 [开发变更流程](development/change-workflow.md)、[Spec 规范](specs/README.md) 和 [架构决策记录](decisions/README.md)。
+
+## 当前文档
+
+```text
 docs/
-├── README.md                  ← 本文件
-├── README.en.md               ← English README
-├── project-structure.md       ← 项目目录结构说明
-├── agent-maintenance/         ← Agent 系统维护手册
-├── design/                    ← 架构设计文档
-├── deployment/                ← 部署与构建（Docker 构建链、离线包、镜像）
-├── development/               ← 开发手册（本地跑/Docker 跑/配置/常见问题）
-├── dev-plans/                 ← 分阶段开发计划
-├── operations/                ← 运维手册 & 流程分析
-├── reference/                 ← 外部参考资料
-└── testing/                   ← 测试用例
+├── architecture/     当前架构、数据流和模块边界
+├── development/      本地开发、测试与维护流程
+├── deployment/       构建、镜像和部署
+├── operations/       当前运维与运行操作
+├── reference/        外部研究与专项集成参考
+├── testing/          测试资产和测试场景
+├── decisions/        架构决策记录（ADR，待逐步建立）
+├── specs/            已批准变更的规格（待逐步建立）
+└── archive/          历史资料，不代表当前实现
 ```
 
----
+### architecture/（Current）
 
-## 项目结构
+| 文档 | 内容 |
+|---|---|
+| [overview.md](architecture/overview.md) | 系统模块边界与运行时全景 |
+| [chat-agent-flow.md](architecture/chat-agent-flow.md) | 问答、分析、预测、SSE 与持久化主链路 |
+| [state-and-storage.md](architecture/state-and-storage.md) | Chat、ChatRecord 与 AgentMemory 的存储边界 |
+| [permissions-and-tenancy.md](architecture/permissions-and-tenancy.md) | 用户、工作空间、数据权限与子账户体系 |
+| [codebase-map.md](architecture/codebase-map.md) | 项目目录、模块归属和常见改动入口 |
+| [deployment-topology.md](architecture/deployment-topology.md) | Docker 开发与生产构建拓扑 |
 
-| 文件 | 说明 |
-|------|------|
-| [project-structure.md](project-structure.md) | 项目目录结构说明：各子目录用途与 backend 内部结构速览 |
-| [README.en.md](README.en.md) | 英文版项目 README（与根目录 README.md 内容对应，供 GitHub 中英切换） |
+### development/（Current）
 
----
+| 文档 | 内容 |
+|---|---|
+| [quickstart.md](development/quickstart.md) | 本地与 Docker 开发、测试和常见问题 |
+| [agent-maintenance.md](development/agent-maintenance.md) | Agent 工具、Profile、SSE 和维护入口 |
+| [change-workflow.md](development/change-workflow.md) | 规格、实现、验证与文档更新流程 |
 
-## [agent-maintenance/](agent-maintenance/)
+### deployment/ 与 operations/（Current）
 
-Agent 系统维护与开发指南。
+| 文档 | 内容 |
+|---|---|
+| [docker-build-and-deploy.md](deployment/docker-build-and-deploy.md) | 构建链、开发镜像、生产镜像和离线包 |
+| [DataEase_SQLBot_运维手册.md](operations/DataEase_SQLBot_运维手册.md) | 启停、日志与日常运维速查 |
+| [installer 使用说明](../installer/README.md) | 安装、升级和卸载 |
 
-| 文件 | 说明 |
-|------|------|
-| [README.md](agent-maintenance/README.md) | Agent 系统维护手册：工具注册、角色定义、添加新工具的完整流程 |
-| [case-study-tool-responsibility.md](agent-maintenance/case-study-tool-responsibility.md) | 案例研究：工具职责混乱导致内部查询泄露到前端的排查与修复 |
+### specs/ 与 decisions/（Current）
 
----
+| 文档 | 内容 |
+|---|---|
+| [specs/README.md](specs/README.md) | 重要变更的规格、状态流转和模板 |
+| [decisions/README.md](decisions/README.md) | 架构决策记录（ADR） |
 
-## [design/](design/)
+### testing/（Current）
 
-架构设计与技术方案文档。
+| 文档 | 内容 |
+|---|---|
+| [erp-test-cases.md](testing/erp-test-cases.md) | ERP 跨境电商测试场景与验收样例 |
 
-| 文件 | 说明 |
-|------|------|
-| [agent-comparison.md](design/agent-comparison.md) | Agent 升级：改造前后差异对比 |
-| [agent-upgrade-plan.md](design/agent-upgrade-plan.md) | Agent 架构升级方案 |
-| [legacy-issues-and-migration.md](design/legacy-issues-and-migration.md) | 遗留问题与迁移计划 |
-| [multi-agent-design.md](design/multi-agent-design.md) | 多 Agent 架构设计 |
-| [DataEase_多租户权限改造方案.md](design/DataEase_多租户权限改造方案.md) | DataEase 多租户分层治理改造方案 |
-| [SQLBot_Compiler_Simplified_Design.md](design/SQLBot_Compiler_Simplified_Design.md) | 编译器简化方案 |
-| [SQLBot_Dataset_Compiler_Design.md](design/SQLBot_Dataset_Compiler_Design.md) | DataEase 数据集编译层实施方案 |
-| [SQLBot_旧管线代码清理分析.md](design/SQLBot_旧管线代码清理分析.md) | 旧 Pipeline 管线代码清理分析 |
-| [dingtalk-integration-analysis.md](design/dingtalk-integration-analysis.md) | 钉钉接入可行性分析：鉴权/权限隔离/图表渲染 |
-| [dingtalk-integration-guide.md](design/dingtalk-integration-guide.md) | 钉钉接入操作指南：从零到代码的分步流程 |
-| [thinking-switches-legacy.md](design/thinking-switches-legacy.md) | 思考过程开关遗留问题：分布盘点、命名混乱、死开关、分级整治方案 |
+### reference/（Reference）
 
----
+| 文档 | 内容 |
+|---|---|
+| [metabase-ai-analysis.md](reference/metabase-ai-analysis.md) | Metabase AI（Metabot）架构调研 |
+| [dingtalk/analysis.md](reference/dingtalk/analysis.md) | 钉钉接入可行性分析 |
+| [dingtalk/guide.md](reference/dingtalk/guide.md) | 钉钉专项接入指南；不代表默认能力 |
 
-## [deployment/](deployment/)
+### archive/（Archived）
 
-部署与构建：Docker 构建链、离线安装包、镜像管理。
-
-| 文件 | 说明 |
-|------|------|
-| [docker-build-and-deploy.md](deployment/docker-build-and-deploy.md) | **部署/构建 SSOT**：镜像构建链（上游→本地）、基座内容、本地构建步骤、开发模式 compose、installer 离线包、CI workflow、验证方案、风险 |
-| [installer 使用文档](../../installer/README.md) | `installer/` 目录使用说明：安装流程、sctl 命令、配置项、升级/卸载、手动构建离线包 |
-
----
-
-## [development/](development/)
-
-开发手册：开发者怎么把 SQLBot 跑起来、怎么改代码。
-
-| 文件 | 说明 |
-|------|------|
-| [quickstart.md](development/quickstart.md) | **开发手册**：本地跑（宿主机/Docker 两种）、端口、账号密码、配置外部库、测试、常见问题 |
-
----
-
-## [dev-plans/](dev-plans/)
-
-分阶段开发计划与实施文档。
-
-| 文件 | 说明 |
-|------|------|
-| [phase1-agent-migration.md](dev-plans/phase1-agent-migration.md) | 阶段 1：分析/预测功能迁移至 Agent 引擎 |
-| [phase1.5-agent-optimization.md](dev-plans/phase1.5-agent-optimization.md) | 阶段 1.5：分析/预测 Agent 增强 |
-| [phase2-chart-registry.md](dev-plans/phase2-chart-registry.md) | 阶段 2：图表类型配置化改造 |
-| [phase3-chart-robustness.md](dev-plans/phase3-chart-robustness.md) | 阶段 3：图表系统改进方案 |
-| [phase3-chart-robustness-impl.md](dev-plans/phase3-chart-robustness-impl.md) | 阶段 3：图表健壮性改造实施文档 |
-| [execution-details-v2.md](dev-plans/execution-details-v2.md) | 执行详情优化方案 B |
-| [execution-log.md](dev-plans/execution-log.md) | 执行详情 + Token 统计 + 思考中 统一方案 |
-| [cleanup-lessons-learned.md](dev-plans/cleanup-lessons-learned.md) | 旧管道清理踩坑记录：Bug 修复、日志路径、Docker 配置经验 |
-
----
-
-## [operations/](operations/)
-
-运维手册与执行流程分析。
-
-| 文件 | 说明 |
-|------|------|
-| [DataEase_SQLBot_运维手册.md](operations/DataEase_SQLBot_运维手册.md) | DataEase & SQLBot 运维速查：启动/停止/日志/状态 |
-| [execution-flow.md](operations/execution-flow.md) | 问答执行流程与 DataEase 集成模式分析 |
-| [conversation-fix.md](operations/conversation-fix.md) | 连续对话架构修复方案：跨轮次记忆持久化 |
-| [用户权限体系与子账户管理.md](operations/用户权限体系与子账户管理.md) | 用户权限体系与子账户管理：两层权限模型、数据库表结构、权限检查流程、子账户创建指南 |
-
----
-
-## [reference/](reference/)
-
-外部参考分析资料。
-
-| 文件 | 说明 |
-|------|------|
-| [metabase-ai-analysis.md](reference/metabase-ai-analysis.md) | Metabase AI (Metabot) 架构分析 |
-
----
-
-## [testing/](testing/)
-
-测试用例与测试场景。
-
-| 文件 | 说明 |
-|------|------|
-| [erp-test-cases.md](testing/erp-test-cases.md) | ERP 跨境电商 测试用例 |
+[archive/README.md](archive/README.md) 汇集已完成、被替代或尚未批准的设计和实施计划。需要追溯历史时再阅读；开始新工作必须按新的 Spec 流程重新确认范围和验收标准。

@@ -1,10 +1,16 @@
 # DataEase & SQLBot 运维速查
 
+> 状态：Current（命令需结合目标环境复核）
+> 最后验证：2026-08-08
+> 适用范围：日常启停、日志与状态排查。
+
 > 最后更新: 2026-08-01
 
 ---
 
 ## 一、DataEase
+
+> DataEase 为可选集成场景；以下命令仅适用于已单独部署 DataEase 与 mysql-de 的环境，不属于本仓库默认 Docker 开发编排。
 
 - **地址**: `http://localhost:8100`
 - **账号**: `admin` / `123456`
@@ -55,7 +61,7 @@ docker ps --filter name=sqlbot --format "{{.Status}}"
 | 端口 | 用途 | 说明 |
 |------|------|------|
 | 8000 | 后端 API | 已映射，浏览器/curl 可访问 |
-| 8001 | MCP | 已映射 |
+| 8001 | MCP | 端口已映射，但默认 Compose 未启动 `mcp_app` |
 | 5173 | 前端 vite dev | 已映射（开发模式） |
 | **5432** | **内置 postgres** | **已映射**（`docker-compose.yml`），宿主机可用数据库工具连 `localhost:5432` |
 

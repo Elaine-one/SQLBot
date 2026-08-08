@@ -64,7 +64,7 @@
 
 ### 1.4 为什么现有文档没发现这些问题
 
-[升级方案](sqlbot-agent-upgrade-plan.md) 中设计了 MemorySaver + thread_id 的 checkpoint 机制（第 3.1、6.2 节），但实际实现时：
+[历史升级方案](agent-upgrade-plan.md) 中设计了 MemorySaver + thread_id 的 checkpoint 机制（第 3.1、6.2 节），但实际实现时：
 
 - [graph.py:184](backend/apps/chat/agent/graph.py#L184) 调用了 `workflow.compile()` **没有传入 checkpointer**
 - [adapter.py:105](backend/apps/chat/agent/adapter.py#L105) 每次都 `init_agent_memory()` 创建全新内存
